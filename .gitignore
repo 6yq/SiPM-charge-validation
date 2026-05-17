@@ -1,0 +1,16 @@
+data/
+results/
+figures/
+__pycache__/
+*.pyc
+*.pyo
+.data.stamp
+.validate.stamp
+/tmp/
+
+# markdown docs (project instructions, agent notes, etc.) — keep README
+*.md
+!README.md
+
+# local tool/config state directories
+.*/

@@ -1,0 +1,3 @@
+[submodule "fitter"]
+	path = fitter
+	url = https://github.com/6yq/generalized-tweedie-fitter
