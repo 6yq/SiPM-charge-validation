@@ -264,11 +264,11 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
         if len(trace_logl) > 1:
             fig, axes = plt.subplots(2, 1, sharex=True)
             axes[0].plot(trace_logl, lw=1)
-            axes[0].set_ylabel("log L")
+            axes[0].set_ylabel("$\ell$")
             axes[0].set_title(f"Optimizer trace — {rec['voltage']} V")
             axes[0].grid(True, alpha=0.3)
             axes[1].semilogy(trace_gnorm, lw=1, color="C1")
-            axes[1].set_ylabel("|∇|")
+            axes[1].set_ylabel(r"$|\nabla|$")
             axes[1].set_xlabel("Iteration")
             axes[1].grid(True, alpha=0.3)
             pp.savefig(fig)

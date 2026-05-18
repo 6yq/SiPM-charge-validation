@@ -216,11 +216,7 @@ def _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
     for ax in axes_flat[len(to_scan) :]:
         ax.set_visible(False)
 
-    fig.suptitle(
-        f"Likelihood scans — {rec['voltage']} V"
-        f"  (converged={rec.get('converged')},"
-        f" logl={rec.get('logl', float('nan')):.1f})",
-    )
+    fig.suptitle(f"Likelihood scans — {rec['voltage']} V")
     return fig
 
 
