@@ -7,6 +7,7 @@ import optax
 
 try:
     from tqdm import tqdm as _tqdm
+
     _HAS_TQDM = True
 except ImportError:
     _HAS_TQDM = False
@@ -61,21 +62,26 @@ def _seed_progress_bar_kwargs(n_seeds):
 
 def _compile_vg(fitter):
     """JIT-compile value_and_grad once; share across seeds to avoid LLVM OOM."""
+
     def neg_logl(t):
         return -fitter._logl_from_theta(t)
+
     return jax.jit(jax.value_and_grad(neg_logl)), jax.jit(neg_logl)
 
 
 def _make_step_fn(optimizer, vg_fn, value_fn_jit, bounds_lo, bounds_hi):
     """JIT one optimizer step so Optax's line-search loop is compiled once."""
+
     def step(theta, opt_state, value, grad):
         updates, new_opt_state = optimizer.update(
-            grad, opt_state, theta,
-            value=value, grad=grad, value_fn=value_fn_jit,
+            grad,
+            opt_state,
+            theta,
+            value=value,
+            grad=grad,
+            value_fn=value_fn_jit,
         )
-        new_theta = jnp.clip(
-            optax.apply_updates(theta, updates), bounds_lo, bounds_hi
-        )
+        new_theta = jnp.clip(optax.apply_updates(theta, updates), bounds_lo, bounds_hi)
         new_value, new_grad = vg_fn(new_theta)
         return new_theta, new_opt_state, new_value, new_grad
 
@@ -86,8 +92,8 @@ def fit_optax(
     fitter,
     theta0=None,
     maxiter=2000,
-    tol_grad=1e-5,
-    tol_nll=1e-8,
+    tol_grad=1e-2,
+    tol_nll=1e-6,
     memory_size=10,
     desc="L-BFGS",
     vg_fn=None,
@@ -128,7 +134,8 @@ def fit_optax(
             desc=desc,
             **_progress_bar_kwargs(maxiter),
         )
-        if _HAS_TQDM and progress else None
+        if _HAS_TQDM and progress
+        else None
     )
 
     for i in range(maxiter):
@@ -184,8 +191,8 @@ def fit_optax_lax(
     fitter,
     theta0=None,
     maxiter=2000,
-    tol_grad=1e-5,
-    tol_nll=1e-8,
+    tol_grad=1e-2,
+    tol_nll=1e-6,
     memory_size=10,
     desc="L-BFGS (lax)",
     **kwargs,  # absorb vg_fn/value_fn_jit passed by fit_multistart
@@ -214,7 +221,10 @@ def fit_optax_lax(
     opt_state = optimizer.init(theta0_j)
 
     init_carry = (
-        theta0_j, opt_state, value, grad,
+        theta0_j,
+        opt_state,
+        value,
+        grad,
         jnp.array(0, dtype=jnp.int32),
         jnp.array(0, dtype=jnp.int32),
         jnp.array(False),
@@ -236,8 +246,12 @@ def fit_optax_lax(
 
         def do_step(_):
             updates, new_opt_state = optimizer.update(
-                grad, opt_state, theta,
-                value=value, grad=grad, value_fn=neg_logl_fn,
+                grad,
+                opt_state,
+                theta,
+                value=value,
+                grad=grad,
+                value_fn=neg_logl_fn,
             )
             new_theta = jnp.clip(
                 optax.apply_updates(theta, updates), bounds_lo, bounds_hi
@@ -253,8 +267,14 @@ def fit_optax_lax(
         )
 
         return (
-            new_theta, new_opt_state, new_value, new_grad,
-            n_iter + 1, new_consec, new_converged, value,
+            new_theta,
+            new_opt_state,
+            new_value,
+            new_grad,
+            n_iter + 1,
+            new_consec,
+            new_converged,
+            value,
         )
 
     print(f"[OPTAX] {desc}: compiling + running (maxiter={_maxiter})...", flush=True)
@@ -332,9 +352,7 @@ def _make_seeds(fitter, theta0, n_seeds=3):
         for dim_i, (idx, lo, hi) in enumerate(dims):
             q = _seed_quantile(seed_i, dim_i)
             seed[idx] = float(lo + q * (hi - lo))
-        seeds.append(
-            np.clip(seed, bounds_lo, bounds_hi)
-        )
+        seeds.append(np.clip(seed, bounds_lo, bounds_hi))
     return seeds
 
 
@@ -344,8 +362,8 @@ def fit_multistart(
     n_seeds=3,
     use_lax=False,
     maxiter=2000,
-    tol_grad=1e-5,
-    tol_nll=1e-8,
+    tol_grad=1e-2,
+    tol_nll=1e-6,
     memory_size=10,
 ):
     """Run optimizer from n_seeds starting points; return best (highest logl) result.
@@ -369,16 +387,21 @@ def fit_multistart(
     best_result = None
     seed_pbar = (
         _tqdm(desc="multi-start", **_seed_progress_bar_kwargs(len(seeds)))
-        if _HAS_TQDM and len(seeds) > 1 else None
+        if _HAS_TQDM and len(seeds) > 1
+        else None
     )
 
     for i, seed in enumerate(seeds):
         result = fit_fn(
-            fitter, theta0=seed, maxiter=maxiter,
-            tol_grad=tol_grad, tol_nll=tol_nll,
+            fitter,
+            theta0=seed,
+            maxiter=maxiter,
+            tol_grad=tol_grad,
+            tol_nll=tol_nll,
             memory_size=memory_size,
             desc=f"seed {i+1}/{len(seeds)}",
-            vg_fn=vg_fn, value_fn_jit=value_fn_jit,
+            vg_fn=vg_fn,
+            value_fn_jit=value_fn_jit,
             progress=(seed_pbar is None),
         )
         theta_i, logl_i = result[0], result[1]
