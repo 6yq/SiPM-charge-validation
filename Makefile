@@ -5,14 +5,17 @@ FITTER_DIR:=$(CURDIR)
 # jax_dep installs JAX related packages.
 JAX_DEP:=/mnt/stage/liuyq/tao/jax_dep
 export PYTHONPATH:=$(FITTER_DIR):$(JAX_DEP)
+# Keep CPU JAX fits from spawning hundreds of worker threads on large hosts.
+export XLA_FLAGS:=--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=8 --xla_cpu_parallel_codegen_split_count=1
+export OMP_NUM_THREADS:=8
+export OPENBLAS_NUM_THREADS:=8
+export MKL_NUM_THREADS:=8
+export NUMEXPR_NUM_THREADS:=8
 
 VSTEMS:=53 53.5 54 54.5 55 55.5 56 56.5 57 57.5 58 58.5 59 59.5 60
 DATA_FILES:=$(VSTEMS:%=data/PCB6_MPPC_%V_histo.txt)
 RESULT_FILES:=$(VSTEMS:%=results/PCB6_MPPC_%V.json)
 SCAN_FILES:=$(VSTEMS:%=figures/PCB6_MPPC_%V_scan.pdf)
-FIT_SCRIPTS:=scripts/fit.py scripts/fit_io.py scripts/fit_init.py \
-             scripts/fit_build.py scripts/fit_optim.py \
-             scripts/fit_analysis.py scripts/fit_plot.py
 
 .PHONY: all data fit scan validate clean
 
@@ -33,19 +36,12 @@ $(DATA_FILES): .data.stamp
 
 fit: $(RESULT_FILES)
 
-results/PCB6_MPPC_%V.json: data/PCB6_MPPC_%V_histo.txt $(FIT_SCRIPTS)
+results/PCB6_MPPC_%V.json: data/PCB6_MPPC_%V_histo.txt
 	mkdir -p results figures
 	{ time $(PYTHON) scripts/fit.py $< -o $@ \
 		--out-fig figures/PCB6_MPPC_$*V.pdf \
 		--voltage $* \
 		--dcr-auto ; } 1>$@.log 2>$@.time.log
-
-# ─── scan ────────────────────────────────────────────────────────────────────
-
-scan: $(SCAN_FILES)
-
-figures/PCB6_MPPC_%V_scan.pdf: results/PCB6_MPPC_%V.json scripts/fit_scan.py $(FIT_SCRIPTS)
-	$(PYTHON) scripts/fit_scan.py $< --out-fig $@
 
 # ─── validate ────────────────────────────────────────────────────────────────
 
