@@ -69,17 +69,7 @@ _SCAN_DEFS = [
 # ─── core scan ────────────────────────────────────────────────────────────────
 
 
-def scan_param(fitter, theta, theta_err, param_name, n_sigma=5.0, n_points=101):
-    """Evaluate logl on a 1-D grid with one parameter varied.
-
-    Returns (raw_grid, logl_vals), or (None, None) if param absent.
-    """
-    names = list(fitter.param_names)
-    if param_name not in names:
-        return None, None
-    idx = names.index(param_name)
-    theta_j = jnp.asarray(theta, dtype=jnp.float64)
-
+def _scan_limits(fitter, theta, theta_err, idx, param_name, n_sigma):
     center = float(theta[idx])
     err = (
         float(theta_err[idx])
@@ -93,6 +83,36 @@ def scan_param(fitter, theta, theta_err, param_name, n_sigma=5.0, n_points=101):
         hi = min(center + n_sigma * err, hi_b)
     else:
         lo, hi = lo_b, hi_b
+
+    if param_name == "b_logDiff":
+        # Optimizer bounds are deliberately broad; profile plots should stay local.
+        # Scan G* in a ±50% physical window around the MLE, then convert back to raw b.
+        names = list(fitter.param_names)
+        idx_a = names.index("a_logSigma")
+        sigma = float(np.exp(theta[idx_a]))
+        diff = float(np.exp(center))
+        g_mle = sigma + diff
+        g_lo = max(0.5 * g_mle, sigma + float(np.exp(lo_b)))
+        g_hi = min(1.5 * g_mle, sigma + float(np.exp(hi_b)))
+        if g_hi > g_lo and g_lo > sigma:
+            lo = max(lo, float(np.log(g_lo - sigma)))
+            hi = min(hi, float(np.log(g_hi - sigma)))
+
+    return lo, hi
+
+
+def scan_param(fitter, theta, theta_err, param_name, n_sigma=5.0, n_points=101):
+    """Evaluate logl on a 1-D grid with one parameter varied.
+
+    Returns (raw_grid, logl_vals), or (None, None) if param absent.
+    """
+    names = list(fitter.param_names)
+    if param_name not in names:
+        return None, None
+    idx = names.index(param_name)
+    theta_j = jnp.asarray(theta, dtype=jnp.float64)
+
+    lo, hi = _scan_limits(fitter, theta, theta_err, idx, param_name, n_sigma)
 
     if hi - lo < 1e-10:
         return None, None
