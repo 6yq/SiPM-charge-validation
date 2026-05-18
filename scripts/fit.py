@@ -12,16 +12,33 @@ import jax.numpy as jnp
 
 from math import log
 
-from fit_io import parse_histogram, trim_histogram, load_initial_values
+from fit_io import (
+    parse_histogram,
+    trim_histogram,
+    roi_lower_sigma_for_voltage,
+    select_fit_roi,
+    load_initial_values,
+)
 from fit_init import (
     estimate_init,
     estimate_dark_mu,
     dcr_policy,
     theta_from_initial_values,
 )
+from fit_defaults import (
+    PEAKOTRON_TAU_SLOW_NS,
+    PEAKOTRON_T0_PRE_NS,
+    PEAKOTRON_T_GATE_NS,
+)
 from fit_build import make_fitter
 from fit_optim import _is_gpu, fit_multistart
-from fit_analysis import spe_phys, dark_phys, compute_chi2, compute_cov, print_theta_table
+from fit_analysis import (
+    spe_phys,
+    dark_phys,
+    compute_chi2,
+    compute_cov,
+    print_theta_table,
+)
 from fit_plot import save_fit_plot
 
 jax.config.update("jax_enable_x64", True)
@@ -37,8 +54,9 @@ def main():
     parser.add_argument("-o", "--output", required=True)
     parser.add_argument("--out-fig", default=None, help="Per-voltage fit plot PDF")
     parser.add_argument("--maxiter", type=int, default=2000)
-    parser.add_argument("--n-seeds", type=int, default=3,
-                        help="Number of multi-start seeds (default: 3)")
+    parser.add_argument(
+        "--n-seeds", type=int, default=16, help="Number of multi-start seeds"
+    )
     parser.add_argument(
         "--init-json",
         default=None,
@@ -68,23 +86,23 @@ def main():
     dcr_group.add_argument(
         "--gate-T",
         type=float,
-        default=200.0,
+        default=PEAKOTRON_T_GATE_NS,
         metavar="NS",
-        help="Gate length in ns (default: 200)",
+        help=f"Gate length in ns (default: {PEAKOTRON_T_GATE_NS:g}, PeakOTron PCB6)",
     )
     dcr_group.add_argument(
         "--gate-t0",
         type=float,
-        default=100.0,
+        default=PEAKOTRON_T0_PRE_NS,
         metavar="NS",
-        help="Pre-gate window in ns (default: 100)",
+        help=f"Pre-gate window in ns (default: {PEAKOTRON_T0_PRE_NS:g}, PeakOTron PCB6)",
     )
     dcr_group.add_argument(
         "--tau-slow",
         type=float,
-        default=100.0,
+        default=PEAKOTRON_TAU_SLOW_NS,
         metavar="NS",
-        help="Slow-pulse time constant in ns (default: 100)",
+        help=f"Slow-pulse time constant in ns (default: {PEAKOTRON_TAU_SLOW_NS:g}, PeakOTron PCB6)",
     )
     args = parser.parse_args()
 
@@ -97,11 +115,29 @@ def main():
         sys.exit(0)
 
     charges, counts = trim_histogram(charges, counts)
+    charges_full = charges
+    counts_full = counts
+    n_events_full = int(np.round(counts_full).astype(int).sum())
 
     ped_mean, ped_sigma, spe_mean, spe_sigma, lam_est = estimate_init(charges, counts)
     print(
         f"[INIT] V={args.voltage}V  ped_mean={ped_mean:.2f}  ped_sigma={ped_sigma:.2f}"
         f"  spe_mean={spe_mean:.2f}  spe_sigma={spe_sigma:.2f}  lam_est={lam_est:.3f}",
+        flush=True,
+    )
+
+    roi_lower_sigma = roi_lower_sigma_for_voltage(args.voltage)
+    charges_fit, counts_fit, roi_q_min = select_fit_roi(
+        charges_full,
+        counts_full,
+        ped_mean,
+        ped_sigma,
+        lower_sigma=roi_lower_sigma,
+    )
+    n_events_fit = int(np.round(counts_fit).astype(int).sum())
+    print(
+        f"[ROI ] fit range Q >= {roi_q_min:.2f}"
+        f"  fit_entries={n_events_fit}  total_entries={n_events_full}",
         flush=True,
     )
 
@@ -147,8 +183,8 @@ def main():
         print(f"[INIT] loaded overrides from {args.init_json}", flush=True)
 
     fitter = make_fitter(
-        charges,
-        counts,
+        charges_fit,
+        counts_fit,
         ped_mean,
         ped_sigma,
         spe_mean,
@@ -158,6 +194,9 @@ def main():
         dark_T_gate=args.gate_T,
         dark_t0_pre=args.gate_t0,
         dark_tau_slow=args.tau_slow,
+        total_events=n_events_full,
+        display_charges=charges_full,
+        display_counts=counts_full,
     )
 
     if args.dcr_fixed and dcr_mu_init is not None and "dark" in fitter.layout:
@@ -188,8 +227,11 @@ def main():
 
     try:
         theta, logl, converged, n_iter, trace_logl, trace_gnorm = fit_multistart(
-            fitter, theta0=theta0, n_seeds=args.n_seeds,
-            use_lax=_use_lax, maxiter=args.maxiter,
+            fitter,
+            theta0=theta0,
+            n_seeds=args.n_seeds,
+            use_lax=_use_lax,
+            maxiter=args.maxiter,
         )
     except Exception as exc:
         print(f"[FAIL] optimization failed for V={args.voltage}V: {exc}", flush=True)
@@ -244,7 +286,8 @@ def main():
         "converged": bool(converged),
         "logl": float(logl),
         "n_iter": int(n_iter),
-        "n_events": int(np.round(counts).astype(int).sum()),
+        "n_events": n_events_full,
+        "n_fit_events": n_events_fit,
         "param_names": list(fitter.param_names),
         "theta": [float(x) for x in theta],
         "theta_err": [float(x) for x in theta_err],
@@ -280,8 +323,14 @@ def main():
             "spe_sigma": float(spe_sigma),
             "lam_est": float(lam_est),
         },
-        "hist_q": [float(x) for x in charges],
-        "hist_counts": [float(x) for x in counts],
+        "fit_roi": {
+            "q_min": float(roi_q_min),
+            "lower_sigma": float(roi_lower_sigma),
+        },
+        "hist_q": [float(x) for x in charges_fit],
+        "hist_counts": [float(x) for x in counts_fit],
+        "hist_full_q": [float(x) for x in charges_full],
+        "hist_full_counts": [float(x) for x in counts_full],
         "hist_bin_edges": [float(x) for x in fitter.bins],
     }
 
