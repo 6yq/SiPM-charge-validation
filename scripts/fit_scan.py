@@ -191,7 +191,7 @@ def _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
         ax.set_ylabel(r"$\Delta(2\ln L)$")
         ax.set_ylim(bottom=0.0)
         ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=8, frameon=False)
+        ax.legend(fontsize=14, frameon=False)
 
     for ax in axes_flat[len(to_scan) :]:
         ax.set_visible(False)
@@ -200,7 +200,7 @@ def _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
         f"Likelihood scans — {rec['voltage']} V"
         f"  (converged={rec.get('converged')},"
         f" logl={rec.get('logl', float('nan')):.1f})",
-        fontsize=10,
+        fontsize=18,
     )
     return fig
 
@@ -238,6 +238,10 @@ def plot_scans(fitter, theta, theta_err, rec, out_path, n_sigma=5.0, n_points=10
 # ─── main ─────────────────────────────────────────────────────────────────────
 
 
+def _should_skip_scan(rec):
+    return bool(rec.get("empty"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", help="Fit result JSON")
@@ -259,8 +263,8 @@ def main():
     with open(args.input) as fh:
         rec = json.load(fh)
 
-    if rec.get("empty") or not rec.get("converged"):
-        print(f"[SKIP] {args.input}: empty or not converged", flush=True)
+    if _should_skip_scan(rec):
+        print(f"[SKIP] {args.input}: empty fit result", flush=True)
         sys.exit(0)
 
     charges = np.array(rec["hist_q"])

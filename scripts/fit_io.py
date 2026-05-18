@@ -29,7 +29,7 @@ def roi_lower_sigma_for_voltage(voltage):
     """Voltage-dependent lower fit boundary in pedestal sigma units."""
     v = float(voltage)
     if 53.0 <= v < 54.0:
-        return 2.0
+        return 2.5
     if 54.0 <= v < 55.0:
         return 3.0
     return 3.5

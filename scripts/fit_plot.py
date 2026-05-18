@@ -63,6 +63,13 @@ def _pull_points_in_roi(bin_centers, hist, ys, x_lo, x_hi):
     return bin_centers[mask], pull[mask]
 
 
+def _histogram_data_range(bins, hist):
+    nz = np.where(np.asarray(hist) > 0)[0]
+    if len(nz) == 0:
+        return float(bins[0]), float(bins[-1])
+    return float(bins[nz[0]]), float(bins[nz[-1] + 1])
+
+
 def _place_main_legend(ax_main, extra_info):
     from matplotlib.lines import Line2D
 
@@ -76,15 +83,15 @@ def _place_main_legend(ax_main, extra_info):
     return ax_main.legend(
         handles,
         labels,
-        frameon=True,
+        frameon=False,
         fancybox=False,
-        framealpha=0.88,
-        loc="upper left",
-        bbox_to_anchor=(1.01, 1.0),
-        borderaxespad=0.0,
+        framealpha=0.78,
+        loc="upper right",
+        bbox_to_anchor=(0.98, 0.98),
+        borderaxespad=0.2,
         labelspacing=0.4,
         handlelength=2.0,
-        prop={"size": 8},
+        prop={"size": 14},
     )
 
 
@@ -150,6 +157,7 @@ def _build_extra_info(rec):
 def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gnorm):
     """PDF: charge spectrum fit, optimizer trace (CPU only), likelihood scans."""
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
@@ -167,8 +175,7 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
     # ── rebin for display ──────────────────────────────────────────────────
     ys_full = fitter.estimate_bin_counts_at(theta, bins)
     comps_full = [
-        fitter.estimate_component_counts_at(theta, k, bins)
-        for k in range(1, n_pe + 1)
+        fitter.estimate_component_counts_at(theta, k, bins) for k in range(1, n_pe + 1)
     ]
     labels = [f"{k} PE" for k in range(1, n_pe + 1)]
 
@@ -187,7 +194,7 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
     roi_info = rec.get("fit_roi", {})
     roi_lower_sigma = float(roi_info.get("lower_sigma", 3.5))
     x_lo_roi = _plot_roi_lower(ped_mean_v, ped_sigma_v, roi_lower_sigma)
-    x_hi_roi = float(bins[-1])
+    _, x_hi_roi = _histogram_data_range(bins_d, hist_d)
 
     xsp_d, smooth_d, comps_roi = _clip_curves_to_roi(
         bin_centers_d, comps_d, xsp, smooth_full, x_lo_roi, x_hi_roi
@@ -200,8 +207,8 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
     with PdfPages(out_path) as pp:
         # ── page 1: charge spectrum ──────────────────────────────────────────
         fig, ax_main, ax_resid, ax_leg = make_figure(n_comps=0)
-        fig.set_size_inches(8.4, 6.2, forward=True)
-        fig.subplots_adjust(left=0.11, right=0.72, top=0.92, bottom=0.10, hspace=0.08)
+        fig.set_size_inches(8.0, 6.2, forward=True)
+        fig.subplots_adjust(left=0.11, right=0.97, top=0.92, bottom=0.10, hspace=0.08)
         plot_histogram_with_fit(
             bins=bins_d,
             hist=hist_d,
@@ -248,14 +255,14 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
         ax_resid.plot(pull_x, pull, "o", color="black", ms=2)
         ax_resid.set_ylabel("Pull")
         ax_resid.set_xlabel("Q")
-        ax_resid.set_xlim(x_lo_roi, x_hi_roi)
+        ax_resid.set_xlim(float(bins_d[0]), float(bins_d[-1]))
         ax_resid.grid(True, alpha=0.3)
         pp.savefig(fig)
         plt.close(fig)
 
         # ── page 2: optimizer trace (CPU path only) ──────────────────────────
         if len(trace_logl) > 1:
-            fig, axes = plt.subplots(2, 1, figsize=(7, 5), sharex=True)
+            fig, axes = plt.subplots(2, 1, sharex=True)
             axes[0].plot(trace_logl, lw=1)
             axes[0].set_ylabel("log L")
             axes[0].set_title(f"Optimizer trace — {rec['voltage']} V")
