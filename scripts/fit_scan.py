@@ -11,15 +11,22 @@ import os
 import sys
 
 import jax
+
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fit_build import make_fitter
+from fit_defaults import (
+    PEAKOTRON_TAU_SLOW_NS,
+    PEAKOTRON_T0_PRE_NS,
+    PEAKOTRON_T_GATE_NS,
+)
 
 
 # ─── physical transforms ──────────────────────────────────────────────────────
+
 
 def _sigmoid(x):
     return 1.0 / (1.0 + np.exp(-np.asarray(x, dtype=float)))
@@ -30,6 +37,8 @@ def _raw_to_phys(name, raw_vals, theta, fitter):
     if name == "lam":
         return raw_vals
     if name == "log_rho":
+        return np.exp(raw_vals)
+    if name == "log_xi":
         return np.exp(raw_vals)
     if name == "logit_beta":
         return _sigmoid(raw_vals)
@@ -48,15 +57,17 @@ def _raw_to_phys(name, raw_vals, theta, fitter):
 
 _SCAN_DEFS = [
     # (theta param name, physical x-axis label)
-    ("lam",        r"$\lambda$ (occupancy)"),
-    ("b_logDiff",  r"$G^*$ (SPE mean)"),
-    ("log_rho",    r"$\rho$ (AP count NB)"),
-    ("logit_beta", r"$\beta$ (AP charge Beta mean)"),
+    ("lam", r"$\lambda$"),
+    ("b_logDiff", r"$G^*$"),
+    ("log_xi", r"$\xi$"),
+    ("log_rho", r"$\rho$"),
+    ("logit_beta", r"$\beta$"),
     ("log_mu_dark", r"$\mu_\mathrm{dark}$"),
 ]
 
 
 # ─── core scan ────────────────────────────────────────────────────────────────
+
 
 def scan_param(fitter, theta, theta_err, param_name, n_sigma=5.0, n_points=101):
     """Evaluate logl on a 1-D grid with one parameter varied.
@@ -70,7 +81,11 @@ def scan_param(fitter, theta, theta_err, param_name, n_sigma=5.0, n_points=101):
     theta_j = jnp.asarray(theta, dtype=jnp.float64)
 
     center = float(theta[idx])
-    err = float(theta_err[idx]) if np.isfinite(theta_err[idx]) and theta_err[idx] > 0 else None
+    err = (
+        float(theta_err[idx])
+        if np.isfinite(theta_err[idx]) and theta_err[idx] > 0
+        else None
+    )
     lo_b, hi_b = fitter.bounds[idx]
 
     if err is not None:
@@ -94,6 +109,7 @@ def scan_param(fitter, theta, theta_err, param_name, n_sigma=5.0, n_points=101):
 
 # ─── plot ─────────────────────────────────────────────────────────────────────
 
+
 def _find_crossings(x, y, level=1.0):
     """Linear interpolation for crossings of y = level."""
     crossings = []
@@ -112,7 +128,8 @@ def _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
     dc_enabled = rec.get("dark_count", {}).get("enabled", False)
 
     to_scan = [
-        (p, lbl) for p, lbl in _SCAN_DEFS
+        (p, lbl)
+        for p, lbl in _SCAN_DEFS
         if p in names and (p != "log_mu_dark" or dc_enabled)
     ]
     if not to_scan:
@@ -130,8 +147,12 @@ def _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
         print(f"[SCAN] scanning {param_name}...", flush=True)
 
         raw_grid, logl_vals = scan_param(
-            fitter, theta, theta_err, param_name,
-            n_sigma=n_sigma, n_points=n_points,
+            fitter,
+            theta,
+            theta_err,
+            param_name,
+            n_sigma=n_sigma,
+            n_points=n_points,
         )
         if raw_grid is None:
             ax.set_visible(False)
@@ -141,8 +162,15 @@ def _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
         delta = np.clip(2.0 * (logl_mle - logl_vals), 0.0, None)
         crossings = _find_crossings(x_phys, delta, level=1.0)
 
-        ax.fill_between(x_phys, 0, delta, where=(delta <= 1.0),
-                        alpha=0.15, color="C0", label=r"$1\sigma$ band")
+        ax.fill_between(
+            x_phys,
+            0,
+            delta,
+            where=(delta <= 1.0),
+            alpha=0.15,
+            color="C0",
+            label=r"$1\sigma$ band",
+        )
         ax.plot(x_phys, delta, color="C0", lw=1.5)
         ax.axhline(1.0, color="C1", lw=1.0, ls="--", label=r"$\Delta(2\ln L)=1$")
 
@@ -150,7 +178,8 @@ def _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
             _raw_to_phys(
                 param_name,
                 np.array([float(theta[names.index(param_name)])]),
-                theta, fitter,
+                theta,
+                fitter,
             )[0]
         )
         ax.axvline(mle_phys, color="gray", lw=1.0, ls=":")
@@ -164,7 +193,7 @@ def _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8, frameon=False)
 
-    for ax in axes_flat[len(to_scan):]:
+    for ax in axes_flat[len(to_scan) :]:
         ax.set_visible(False)
 
     fig.suptitle(
@@ -173,7 +202,6 @@ def _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
         f" logl={rec.get('logl', float('nan')):.1f})",
         fontsize=10,
     )
-    fig.tight_layout()
     return fig
 
 
@@ -181,7 +209,9 @@ def append_to_pdf(pp, fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
     """Append likelihood scan page(s) to an already-open PdfPages object."""
     import matplotlib.pyplot as plt
 
-    fig = _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=n_sigma, n_points=n_points)
+    fig = _make_scan_figure(
+        fitter, theta, theta_err, rec, n_sigma=n_sigma, n_points=n_points
+    )
     if fig is not None:
         pp.savefig(fig)
         plt.close(fig)
@@ -189,11 +219,14 @@ def append_to_pdf(pp, fitter, theta, theta_err, rec, n_sigma=5.0, n_points=101):
 
 def plot_scans(fitter, theta, theta_err, rec, out_path, n_sigma=5.0, n_points=101):
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
 
-    fig = _make_scan_figure(fitter, theta, theta_err, rec, n_sigma=n_sigma, n_points=n_points)
+    fig = _make_scan_figure(
+        fitter, theta, theta_err, rec, n_sigma=n_sigma, n_points=n_points
+    )
     if fig is None:
         return
     with PdfPages(out_path) as pp:
@@ -204,14 +237,23 @@ def plot_scans(fitter, theta, theta_err, rec, out_path, n_sigma=5.0, n_points=10
 
 # ─── main ─────────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", help="Fit result JSON")
     parser.add_argument("--out-fig", required=True, help="Output scan PDF")
-    parser.add_argument("--n-sigma", type=float, default=5.0,
-                        help="Scan ±n_sigma around MLE (default: 5)")
-    parser.add_argument("--n-points", type=int, default=101,
-                        help="Grid points per parameter (default: 101)")
+    parser.add_argument(
+        "--n-sigma",
+        type=float,
+        default=5.0,
+        help="Scan ±n_sigma around MLE (default: 5)",
+    )
+    parser.add_argument(
+        "--n-points",
+        type=int,
+        default=101,
+        help="Grid points per parameter (default: 101)",
+    )
     args = parser.parse_args()
 
     with open(args.input) as fh:
@@ -230,15 +272,21 @@ def main():
     dark_mu_init = dc_info.get("mu_dark") if dc_info.get("enabled") else None
 
     fitter = make_fitter(
-        charges, counts,
-        init["ped_mean"], init["ped_sigma"],
-        init["spe_mean"], init["spe_sigma"],
+        charges,
+        counts,
+        init["ped_mean"],
+        init["ped_sigma"],
+        init["spe_mean"],
+        init["spe_sigma"],
         lam_init=rec.get("lam"),
         dark_mu_init=dark_mu_init,
-        dark_T_gate=dc_model.get("T_gate", 200.0),
-        dark_t0_pre=dc_model.get("t0_pre", 100.0),
-        dark_tau_slow=dc_model.get("tau_slow", 100.0),
+        dark_T_gate=dc_model.get("T_gate", PEAKOTRON_T_GATE_NS),
+        dark_t0_pre=dc_model.get("t0_pre", PEAKOTRON_T0_PRE_NS),
+        dark_tau_slow=dc_model.get("tau_slow", PEAKOTRON_TAU_SLOW_NS),
         bin_edges=np.array(rec["hist_bin_edges"]),
+        total_events=rec.get("n_events"),
+        display_charges=np.array(rec.get("hist_full_q", rec["hist_q"])),
+        display_counts=np.array(rec.get("hist_full_counts", rec["hist_counts"])),
     )
 
     theta = np.array(rec["theta"])
@@ -249,8 +297,15 @@ def main():
         f"  n_sigma={args.n_sigma}  n_points={args.n_points}",
         flush=True,
     )
-    plot_scans(fitter, theta, theta_err, rec, args.out_fig,
-               n_sigma=args.n_sigma, n_points=args.n_points)
+    plot_scans(
+        fitter,
+        theta,
+        theta_err,
+        rec,
+        args.out_fig,
+        n_sigma=args.n_sigma,
+        n_points=args.n_points,
+    )
 
 
 if __name__ == "__main__":

@@ -13,20 +13,25 @@ def estimate_init(charges, counts):
 def estimate_dark_mu(charges, counts, ped_mean, spe_mean, T_gate, t0_pre, tau_slow):
     """Rough mu_dark estimate from 0PE–1PE valley density (PeakOTron-style init).
 
-    At K=0.5 the deterministic dark-pulse density is f_d^(1)(0.5) = 4*tau/(T+t0),
-    so mu_dark ≈ (dN_dark/dK * (T+t0)) / (4*tau).
+    PeakOTron estimates a DCR rate from the density near K=0.5, normalised to
+    the counts below K<0.5, then converts it to mu_dark = DCR*(T+t0).
     """
     K = (np.asarray(charges, float) - float(ped_mean)) / max(float(spe_mean), 1.0)
-    mask = (K >= 0.45) & (K <= 0.55)
-    n_valley = float(counts[mask].sum()) if mask.sum() > 0 else 0.0
-    n_total = float(counts.sum())
-    if n_total <= 0 or n_valley <= 0 or mask.sum() < 2:
+    counts = np.asarray(counts, float)
+    if len(K) < 2:
         return 0.1
-    dK_bin = 0.1 / float(mask.sum())
-    dN_dK = (n_valley / n_total) / dK_bin
-    mu_dark = dN_dK * (T_gate + t0_pre) / max(4.0 * tau_slow, 1e-12)
-    # PeakOTron self-consistency correction
-    mu_dark *= float(np.exp(min(mu_dark * tau_slow / max(T_gate + t0_pre, 1.0), 5.0)))
+    dK = float(np.median(np.abs(np.diff(K))))
+    valley = (K >= 0.45) & (K <= 0.55)
+    below_half = K < 0.5
+    if dK <= 0 or not np.any(valley) or not np.any(below_half):
+        return 0.1
+    NN = float(np.mean(counts[valley]))
+    Nc = max(float(np.sum(counts[below_half])), 1.0)
+    if NN <= 0:
+        return 0.1
+    dcr = NN / Nc / max(4.0 * tau_slow * dK, 1e-12)
+    dcr *= float(np.exp(min(dcr * tau_slow, 5.0)))
+    mu_dark = dcr * (float(T_gate) + float(t0_pre))
     return float(np.clip(mu_dark, 1e-4, 10.0))
 
 
@@ -110,7 +115,11 @@ def theta_from_initial_values(fitter, initial_values):
 
     xi = spe.get("xi", initial_values.get("xi"))
     if xi is not None:
-        theta[spe_sl.start + 2] = float(xi)
+        xi = float(np.clip(float(xi), 1e-12, 1.0 - 1e-12))
+        if "log_xi" in fitter.param_names:
+            theta[spe_sl.start + 2] = log(xi)
+        else:
+            theta[spe_sl.start + 2] = xi
 
     rho = spe.get("rho", initial_values.get("rho"))
     if rho is not None:
