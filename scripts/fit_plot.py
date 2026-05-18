@@ -38,6 +38,10 @@ def _clip_curves_to_roi(bin_centers, comps, xsp, smooth, x_lo, x_hi):
     return xsp[mask_sm], smooth[mask_sm], comps_roi
 
 
+def _plot_roi_lower(ped_mean, ped_sigma):
+    return float(ped_mean) - 3.5 * float(ped_sigma)
+
+
 def _build_extra_info(rec):
     """Build physics-parameter annotation list for the legend."""
     spe = rec.get("spe", {})
@@ -102,13 +106,16 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
     lam_err_raw = float(theta_err[ly["lam"].start])
 
     n_pe = n_max(lam)
-    hist = fitter.hist.astype(float)
-    bins = fitter.bins
+    hist = getattr(fitter, "display_hist", fitter.hist).astype(float)
+    bins = getattr(fitter, "display_bins", fitter.bins)
     bin_centers_full = (bins[:-1] + bins[1:]) / 2
 
     # ── rebin for display ──────────────────────────────────────────────────
-    ys_full = fitter.estimate_bin_counts(theta)
-    comps_full = [fitter.estimate_component_counts(theta, k) for k in range(1, n_pe + 1)]
+    ys_full = fitter.estimate_bin_counts_at(theta, bins)
+    comps_full = [
+        fitter.estimate_component_counts_at(theta, k, bins)
+        for k in range(1, n_pe + 1)
+    ]
     labels = [f"{k} PE" for k in range(1, n_pe + 1)]
 
     hist_d, bins_d, comps_d, ys_d = _rebin(hist, bins, comps_full, ys_full, target=250)
@@ -119,11 +126,11 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
     smooth_full = fitter.estimate_density(theta) * display_bin_width
     xsp = fitter.grid.xsp
 
-    # ── clip smooth/comps curves to ROI [Q0 − 2σ₀, Qmax] ──────────────────
+    # ── clip smooth/comps curves to ROI [Q0 − 3.5σ₀, Qmax] ────────────────
     # Only the red fit line and component lines are clipped; histogram is full.
     ped_mean_v = rec["ped"]["ped_mean"]
     ped_sigma_v = rec["ped"]["ped_sigma"]
-    x_lo_roi = ped_mean_v - 2.0 * ped_sigma_v
+    x_lo_roi = _plot_roi_lower(ped_mean_v, ped_sigma_v)
     x_hi_roi = float(bin_centers_full[-1])
 
     xsp_d, smooth_d, comps_roi = _clip_curves_to_roi(
