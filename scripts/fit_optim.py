@@ -38,7 +38,20 @@ def _progress_bar_kwargs(maxiter):
         "total": maxiter,
         "unit": "step",
         "ncols": 90,
-        "miniters": 20,
+        "miniters": 50,
+        "mininterval": 0,
+        "maxinterval": float("inf"),
+        "leave": False,
+        "file": sys.stderr,
+    }
+
+
+def _seed_progress_bar_kwargs(n_seeds):
+    return {
+        "total": n_seeds,
+        "unit": "seed",
+        "ncols": 90,
+        "miniters": 1,
         "mininterval": 0,
         "maxinterval": float("inf"),
         "leave": False,
@@ -79,6 +92,7 @@ def fit_optax(
     desc="L-BFGS",
     vg_fn=None,
     value_fn_jit=None,
+    progress=True,
 ):
     """L-BFGS + Wolfe zoom line search via Python loop (CPU path).
 
@@ -114,7 +128,7 @@ def fit_optax(
             desc=desc,
             **_progress_bar_kwargs(maxiter),
         )
-        if _HAS_TQDM else None
+        if _HAS_TQDM and progress else None
     )
 
     for i in range(maxiter):
@@ -268,42 +282,59 @@ def fit_optax_lax(
 
 # ─── multi-start ─────────────────────────────────────────────────────────────
 
-# Seed configurations: (lam_scale, log_rho_shift)
-# log_rho_shift is additive: rho_new = exp(log_rho + shift), so +2 ≈ ×7.4×
-_SEED_CONFIGS = [
-    (1.0,  0.0),   # default
-    (0.6,  0.0),   # lower occupancy
-    (1.5,  0.0),   # higher occupancy
-    (1.0,  2.0),   # more AP (rho × e² ≈ 7×)
-    (0.7,  2.0),   # lower lam + more AP (AP–lam anti-correlation)
-]
+_HALTON_BASES = (2, 3, 5, 7, 11, 13, 17)
+
+
+def _halton(index, base):
+    f = 1.0
+    r = 0.0
+    i = int(index)
+    while i > 0:
+        f /= base
+        r += f * (i % base)
+        i //= base
+    return r
+
+
+def _seed_quantile(index, dim):
+    # Avoid exact bounds, but still span nearly the full allowed interval.
+    return 0.02 + 0.96 * _halton(index, _HALTON_BASES[dim])
 
 
 def _make_seeds(fitter, theta0, n_seeds=3):
     """Generate physically diverse initial vectors.
 
     Seed 0: default theta0.
-    Subsequent seeds vary lam and log_rho per _SEED_CONFIGS to cover the
-    lam–AP degeneracy as recommended in CLAUDE.md § Local Minima.
+    Subsequent seeds use a deterministic low-discrepancy design over the
+    strongest local-minimum degeneracies: occupancy, AP count, AP charge,
+    Gen-Poisson dispersion, and optional dark-count occupancy.
     """
     theta0 = np.asarray(theta0, dtype=float)
     names = list(fitter.param_names)
-    lam_idx = fitter.layout["lam"].start
-    lam_lo, lam_hi = fitter.bounds[lam_idx]
-    lam_center = float(theta0[lam_idx])
-
     log_rho_idx = names.index("log_rho") if "log_rho" in names else None
+    logit_beta_idx = names.index("logit_beta") if "logit_beta" in names else None
+    log_xi_idx = names.index("log_xi") if "log_xi" in names else None
+    log_mu_dark_idx = names.index("log_mu_dark") if "log_mu_dark" in names else None
 
-    seeds = []
-    for lam_scale, rho_shift in _SEED_CONFIGS[:n_seeds]:
+    n_seeds = max(1, int(n_seeds))
+    bounds_lo = [b[0] for b in fitter.bounds]
+    bounds_hi = [b[1] for b in fitter.bounds]
+    seeds = [np.clip(theta0.copy(), bounds_lo, bounds_hi)]
+
+    dims = []
+    for idx in (log_rho_idx, logit_beta_idx, log_xi_idx, log_mu_dark_idx):
+        if idx is not None:
+            lo, hi = fitter.bounds[idx]
+            dims.append((idx, float(lo), float(hi)))
+
+    for seed_i in range(1, n_seeds):
         seed = theta0.copy()
-        seed[lam_idx] = float(np.clip(lam_center * lam_scale, lam_lo, lam_hi))
-        if log_rho_idx is not None and rho_shift != 0.0:
-            lo_r, hi_r = fitter.bounds[log_rho_idx]
-            seed[log_rho_idx] = float(
-                np.clip(float(theta0[log_rho_idx]) + rho_shift, lo_r, hi_r)
-            )
-        seeds.append(seed)
+        for dim_i, (idx, lo, hi) in enumerate(dims):
+            q = _seed_quantile(seed_i, dim_i)
+            seed[idx] = float(lo + q * (hi - lo))
+        seeds.append(
+            np.clip(seed, bounds_lo, bounds_hi)
+        )
     return seeds
 
 
@@ -336,36 +367,28 @@ def fit_multistart(
 
     best_logl = -np.inf
     best_result = None
+    seed_pbar = (
+        _tqdm(desc="multi-start", **_seed_progress_bar_kwargs(len(seeds)))
+        if _HAS_TQDM and len(seeds) > 1 else None
+    )
 
     for i, seed in enumerate(seeds):
-        lam_init = float(seed[fitter.layout["lam"].start])
-        names = list(fitter.param_names)
-        log_rho_val = (
-            float(seed[names.index("log_rho")])
-            if "log_rho" in names else float("nan")
-        )
-        rho_info = f"  rho={float(np.exp(log_rho_val)):.4f}" if np.isfinite(log_rho_val) else ""
-        print(
-            f"[MULTI] seed {i+1}/{len(seeds)}"
-            f" (lam_init={lam_init:.3f}{rho_info})",
-            flush=True,
-        )
         result = fit_fn(
             fitter, theta0=seed, maxiter=maxiter,
             tol_grad=tol_grad, tol_nll=tol_nll,
             memory_size=memory_size,
             desc=f"seed {i+1}/{len(seeds)}",
             vg_fn=vg_fn, value_fn_jit=value_fn_jit,
+            progress=(seed_pbar is None),
         )
         theta_i, logl_i = result[0], result[1]
-        print(
-            f"[MULTI] seed {i+1}/{len(seeds)}"
-            f"  logl={logl_i:.4f}  converged={result[2]}  n_iter={result[3]}",
-            flush=True,
-        )
         if logl_i > best_logl:
             best_logl = logl_i
             best_result = result
+        if seed_pbar is not None:
+            seed_pbar.set_postfix(best=f"{best_logl:.3f}", refresh=False)
+            seed_pbar.update(1)
 
-    print(f"[MULTI] best logl={best_logl:.4f}", flush=True)
+    if seed_pbar is not None:
+        seed_pbar.close()
     return best_result
