@@ -43,7 +43,7 @@ def dcr_policy(voltage):
       "weak"  — DCR weakly constrained; treat result with caution
       "float" — DCR can be floated freely
     """
-    if voltage <= 53.0:
+    if voltage <= 53.5:
         return "off"
     elif voltage <= 54.0:
         return "weak"

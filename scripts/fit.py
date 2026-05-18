@@ -81,7 +81,7 @@ def main():
         "--dcr-auto",
         action="store_true",
         help="Auto-estimate mu_dark from 0PE-1PE valley; voltage policy applies"
-        " (off <=53V, weak 53.5-54V, float >=54.5V).",
+        " (off <=53.5V, weak 54V, float >=54.5V).",
     )
     dcr_group.add_argument(
         "--gate-T",
