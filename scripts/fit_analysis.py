@@ -13,6 +13,11 @@ def spe_phys(fitter, spe_args, spe_err):
     r["spe_mean_err"] = float(np.sqrt((sigma * da) ** 2 + (float(np.exp(b)) * db) ** 2))
     rho = r["rho"]
     beta = r["beta"]
+    if "log_xi" in fitter.param_names:
+        log_xi_idx = list(fitter.param_names).index("log_xi") - fitter.layout["spe"].start
+        r["xi_err"] = r["xi"] * float(spe_err[log_xi_idx])
+    else:
+        r["xi_err"] = float(spe_err[2])
     drho = rho * float(spe_err[3])
     dbeta = beta * (1.0 - beta) * float(spe_err[4])
     r["rho_err"] = drho
@@ -66,21 +71,16 @@ def dark_phys(fitter, theta, theta_err):
 
 
 def compute_chi2(fitter, theta):
-    """Neyman-B chi-squared; threshold exp >= 1 to avoid tail blow-up."""
+    """Neyman-B chi-squared over the fitted histogram ROI."""
     obs = fitter.hist.astype(float)
     exp = fitter.estimate_bin_counts(theta)
-    A = float(np.exp(float(theta[fitter.layout["log_A"].start])))
-    z_est = max(A - float(np.sum(exp)), 0.0)
-    zero = int(fitter.grid.zero)
 
     mask = exp >= 1.0
     with np.errstate(divide="ignore", invalid="ignore"):
         terms = np.where(mask, (obs - exp) ** 2 / exp, 0.0)
     chi2 = float(np.sum(terms))
-    if z_est > 1.0:
-        chi2 += float((z_est - zero) ** 2 / z_est)
 
-    n_bins_used = int(mask.sum()) + (1 if z_est > 1.0 else 0)
+    n_bins_used = int(mask.sum())
     ndf = n_bins_used - len(theta)
     p_val = float(scipy.stats.chi2.sf(chi2, ndf)) if ndf > 0 else float("nan")
     return chi2, ndf, p_val
@@ -105,6 +105,8 @@ def print_theta_table(fitter, theta, label, theta_err=None):
                 phys = f"spe_mean={np.exp(float(theta[a_idx])) + np.exp(raw):.3f}"
             else:
                 phys = f"exp={np.exp(raw):.3f}"
+        elif name == "log_xi":
+            phys = f"xi={np.exp(raw):.6g}"
         elif name == "log_rho":
             phys = f"rho={np.exp(raw):.5f}"
         elif name == "logit_beta":

@@ -25,6 +25,25 @@ def trim_histogram(charges, counts, pad=20):
     return charges[lo : hi + 1], counts[lo : hi + 1]
 
 
+def roi_lower_sigma_for_voltage(voltage):
+    """Voltage-dependent lower fit boundary in pedestal sigma units."""
+    v = float(voltage)
+    if 53.0 <= v < 54.0:
+        return 2.0
+    if 54.0 <= v < 55.0:
+        return 3.0
+    return 3.5
+
+
+def select_fit_roi(charges, counts, ped_mean, ped_sigma, lower_sigma=3.5):
+    """Select the likelihood ROI [Q0 - lower_sigma*sigma0, max_Q]."""
+    lower = float(ped_mean) - float(lower_sigma) * float(ped_sigma)
+    mask = np.asarray(charges) >= lower
+    if not np.any(mask):
+        return charges, counts, lower
+    return charges[mask], counts[mask], lower
+
+
 def load_initial_values(path):
     """Load optional initial values from JSON.
 

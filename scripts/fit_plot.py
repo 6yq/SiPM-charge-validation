@@ -38,8 +38,62 @@ def _clip_curves_to_roi(bin_centers, comps, xsp, smooth, x_lo, x_hi):
     return xsp[mask_sm], smooth[mask_sm], comps_roi
 
 
-def _plot_roi_lower(ped_mean, ped_sigma):
-    return float(ped_mean) - 3.5 * float(ped_sigma)
+def _plot_roi_lower(ped_mean, ped_sigma, lower_sigma=3.5):
+    return float(ped_mean) - float(lower_sigma) * float(ped_sigma)
+
+
+def _style_project_fit_lines(ax_main, fit_label=None):
+    """Use project-local styling: red total fit, black PE components."""
+    for line in ax_main.lines:
+        linestyle = line.get_linestyle()
+        marker = line.get_marker()
+        if linestyle in ("None", "none", ""):
+            continue
+        if marker not in (None, "", "None"):
+            continue
+        if linestyle == "--":
+            line.set_color("k")
+        else:
+            line.set_color("red")
+
+
+def _pull_points_in_roi(bin_centers, hist, ys, x_lo, x_hi):
+    mask = (bin_centers >= x_lo) & (bin_centers <= x_hi)
+    pull = (hist - ys) / np.sqrt(np.maximum(ys, 1.0))
+    return bin_centers[mask], pull[mask]
+
+
+def _place_main_legend(ax_main, extra_info):
+    from matplotlib.lines import Line2D
+
+    handles, labels = ax_main.get_legend_handles_labels()
+    if extra_info:
+        for info_line in extra_info:
+            handles.append(Line2D([], [], linestyle="none", color="none"))
+            labels.append(info_line)
+    if not handles:
+        return None
+    return ax_main.legend(
+        handles,
+        labels,
+        frameon=True,
+        fancybox=False,
+        framealpha=0.88,
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.0),
+        borderaxespad=0.0,
+        labelspacing=0.4,
+        handlelength=2.0,
+        prop={"size": 8},
+    )
+
+
+def _hide_component_legend(ax_leg):
+    if ax_leg is None:
+        return
+    ax_leg.clear()
+    ax_leg.axis("off")
+    ax_leg.set_visible(False)
 
 
 def _build_extra_info(rec):
@@ -127,11 +181,13 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
     xsp = fitter.grid.xsp
 
     # ── clip smooth/comps curves to ROI [Q0 − 3.5σ₀, Qmax] ────────────────
-    # Only the red fit line and component lines are clipped; histogram is full.
+    # Only the fit/component lines are clipped; histogram is full.
     ped_mean_v = rec["ped"]["ped_mean"]
     ped_sigma_v = rec["ped"]["ped_sigma"]
-    x_lo_roi = _plot_roi_lower(ped_mean_v, ped_sigma_v)
-    x_hi_roi = float(bin_centers_full[-1])
+    roi_info = rec.get("fit_roi", {})
+    roi_lower_sigma = float(roi_info.get("lower_sigma", 3.5))
+    x_lo_roi = _plot_roi_lower(ped_mean_v, ped_sigma_v, roi_lower_sigma)
+    x_hi_roi = float(bins[-1])
 
     xsp_d, smooth_d, comps_roi = _clip_curves_to_roi(
         bin_centers_d, comps_d, xsp, smooth_full, x_lo_roi, x_hi_roi
@@ -143,7 +199,9 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
 
     with PdfPages(out_path) as pp:
         # ── page 1: charge spectrum ──────────────────────────────────────────
-        fig, ax_main, ax_resid, ax_leg = make_figure(n_comps=len(comps_roi))
+        fig, ax_main, ax_resid, ax_leg = make_figure(n_comps=0)
+        fig.set_size_inches(8.4, 6.2, forward=True)
+        fig.subplots_adjust(left=0.11, right=0.72, top=0.92, bottom=0.10, hspace=0.08)
         plot_histogram_with_fit(
             bins=bins_d,
             hist=hist_d,
@@ -165,22 +223,32 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
             ax_resid=ax_resid,
             ax_leg=ax_leg,
             fig=fig,
-            extra_info=extra_info,
+            extra_info=[],
         )
+        _style_project_fit_lines(ax_main)
+        _hide_component_legend(ax_leg)
         ax_main.set_title(f"Hamamatsu PCB6  {rec['voltage']} V")
         ax_main.set_ylim(bottom=0.5)
+        ax_main.set_xlim(float(bins_d[0]), float(bins_d[-1]))
+        leg = ax_main.get_legend()
+        if leg is not None:
+            leg.remove()
+        _place_main_legend(ax_main, extra_info)
 
-        # ── pull panel (full rebinned range) ─────────────────────────────────
-        pull = (hist_d - ys_d) / np.sqrt(np.maximum(ys_d, 1.0))
+        # ── pull panel: same ROI as the fitted line/chi-square ───────────────
+        pull_x, pull = _pull_points_in_roi(
+            bin_centers_d, hist_d, ys_d, x_lo_roi, x_hi_roi
+        )
         ax_resid.cla()
         ax_resid.axhline(0, color="gray", lw=1, ls="--")
         ax_resid.axhline(+1, color="C0", lw=0.6, ls=":")
         ax_resid.axhline(-1, color="C0", lw=0.6, ls=":")
         ax_resid.axhline(+3, color="C1", lw=0.6, ls=":")
         ax_resid.axhline(-3, color="C1", lw=0.6, ls=":")
-        ax_resid.plot(bin_centers_d, pull, "o", color="black", ms=2)
+        ax_resid.plot(pull_x, pull, "o", color="black", ms=2)
         ax_resid.set_ylabel("Pull")
         ax_resid.set_xlabel("Q")
+        ax_resid.set_xlim(x_lo_roi, x_hi_roi)
         ax_resid.grid(True, alpha=0.3)
         pp.savefig(fig)
         plt.close(fig)
