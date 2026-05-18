@@ -26,6 +26,18 @@ def _rebin(hist, bins, comps, ys, target=250):
     return new_hist, new_bins, new_comps, new_ys
 
 
+def _clip_curves_to_roi(bin_centers, comps, xsp, smooth, x_lo, x_hi):
+    """Clip smooth x-grid and NaN-mask component curves outside the ROI."""
+    mask_sm = (xsp >= x_lo) & (xsp <= x_hi)
+    mask_bc = (bin_centers >= x_lo) & (bin_centers <= x_hi)
+    comps_roi = []
+    for comp in comps:
+        comp_roi = np.asarray(comp, dtype=float).copy()
+        comp_roi[~mask_bc] = np.nan
+        comps_roi.append(comp_roi)
+    return xsp[mask_sm], smooth[mask_sm], comps_roi
+
+
 def _build_extra_info(rec):
     """Build physics-parameter annotation list for the legend."""
     spe = rec.get("spe", {})
@@ -114,14 +126,9 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
     x_lo_roi = ped_mean_v - 2.0 * ped_sigma_v
     x_hi_roi = float(bin_centers_full[-1])
 
-    mask_sm = (xsp >= x_lo_roi) & (xsp <= x_hi_roi)
-    xsp_d = xsp[mask_sm]
-    smooth_d = smooth_full[mask_sm]
-
-    # Clip comp lines to the same ROI (use rebinned bin centers)
-    mask_bc = (bin_centers_d >= x_lo_roi) & (bin_centers_d <= x_hi_roi)
-    comps_roi = [c[mask_bc] for c in comps_d]
-    bin_centers_roi = bin_centers_d[mask_bc]
+    xsp_d, smooth_d, comps_roi = _clip_curves_to_roi(
+        bin_centers_d, comps_d, xsp, smooth_full, x_lo_roi, x_hi_roi
+    )
 
     occ = float(np.clip(1.0 - np.exp(-lam), 0.0, 1.0 - 1e-9))
     occ_std = float(lam_err_raw * np.exp(-lam)) if np.isfinite(lam_err_raw) else 0.0
@@ -135,7 +142,7 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
             hist=hist_d,
             xsp=xsp_d,
             smooth=smooth_d,
-            bin_centers=bin_centers_roi,
+            bin_centers=bin_centers_d,
             comps=comps_roi,
             labels=labels,
             params=np.array(theta[ly["spe"]]),
@@ -145,7 +152,7 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
             gm=rec["spe"]["spe_mean"],
             chiSq=rec["chi_sq"],
             ndf=rec["ndf"],
-            ys=ys_d[mask_bc],
+            ys=ys_d,
             logscale=True,
             ax_main=ax_main,
             ax_resid=ax_resid,
