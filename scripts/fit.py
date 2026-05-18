@@ -239,7 +239,7 @@ def main():
     output = {
         "voltage": args.voltage,
         "ap_model": "beta",
-        "optimizer": f"backtracking-lbfgs/{_loop_tag}",
+        "optimizer": f"zoom-lbfgs/{_loop_tag}",
         "empty": False,
         "converged": bool(converged),
         "logl": float(logl),

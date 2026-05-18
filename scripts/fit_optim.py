@@ -22,11 +22,13 @@ def _make_optimizer(memory_size=10):
         optax.clip_by_global_norm(max_norm=1e6),
         optax.scale_by_lbfgs(memory_size=memory_size, scale_init_precond=True),
         optax.scale(-1.0),
-        optax.scale_by_backtracking_linesearch(
-            max_backtracking_steps=30,
+        optax.scale_by_zoom_linesearch(
+            max_linesearch_steps=30,
             slope_rtol=1e-4,
-            decrease_factor=0.5,
+            curv_rtol=0.9,
+            approx_dec_rtol=1e-6,
             increase_factor=1.5,
+            initial_guess_strategy="one",
         ),
     )
 
@@ -78,7 +80,7 @@ def fit_optax(
     vg_fn=None,
     value_fn_jit=None,
 ):
-    """L-BFGS + Armijo backtracking via Python loop (CPU path).
+    """L-BFGS + Wolfe zoom line search via Python loop (CPU path).
 
     Returns (theta, logl, converged, n_iter, trace_logl, trace_gnorm).
     Bounds enforced by projected gradient (clip after apply_updates).
@@ -174,9 +176,9 @@ def fit_optax_lax(
     desc="L-BFGS (lax)",
     **kwargs,  # absorb vg_fn/value_fn_jit passed by fit_multistart
 ):
-    """L-BFGS + Armijo via jax.lax.while_loop (GPU path, single sync at exit).
+    """L-BFGS + Wolfe zoom line search via lax loop (GPU path, single sync).
 
-    The entire loop (including backtracking linesearch's inner while_loop) is
+    The entire loop (including zoom linesearch's inner while_loop) is
     compiled into one XLA program.  No Python round-trips inside the loop.
     trace_logl and trace_gnorm are returned as empty arrays.
     """
