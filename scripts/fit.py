@@ -20,8 +20,8 @@ from fit_init import (
     theta_from_initial_values,
 )
 from fit_build import make_fitter
-from fit_optim import _is_gpu, fit_optax, fit_optax_lax
-from fit_analysis import spe_phys, dark_phys, compute_chi2, compute_cov
+from fit_optim import _is_gpu, fit_multistart
+from fit_analysis import spe_phys, dark_phys, compute_chi2, compute_cov, print_theta_table
 from fit_plot import save_fit_plot
 
 jax.config.update("jax_enable_x64", True)
@@ -37,6 +37,8 @@ def main():
     parser.add_argument("-o", "--output", required=True)
     parser.add_argument("--out-fig", default=None, help="Per-voltage fit plot PDF")
     parser.add_argument("--maxiter", type=int, default=2000)
+    parser.add_argument("--n-seeds", type=int, default=3,
+                        help="Number of multi-start seeds (default: 3)")
     parser.add_argument(
         "--init-json",
         default=None,
@@ -166,6 +168,9 @@ def main():
 
     theta0 = theta_from_initial_values(fitter, initial_values)
 
+    print(f"[INIT] initial theta — V={args.voltage}V", flush=True)
+    print_theta_table(fitter, theta0, "INIT")
+
     _backend = jax.default_backend()
     _use_lax = _is_gpu()
     _loop_tag = "lax.while_loop" if _use_lax else "python"
@@ -176,14 +181,15 @@ def main():
     print(
         f"[FIT ] V={args.voltage}V  n_params={len(theta0)}"
         f"  dcr={'on' if dcr_mu_init is not None else 'off'}"
-        f"  backend={_backend}  loop={_loop_tag}",
+        f"  backend={_backend}  loop={_loop_tag}"
+        f"  seeds={args.n_seeds}",
         flush=True,
     )
 
-    _fit_fn = fit_optax_lax if _use_lax else fit_optax
     try:
-        theta, logl, converged, n_iter, trace_logl, trace_gnorm = _fit_fn(
-            fitter, theta0=theta0, maxiter=args.maxiter
+        theta, logl, converged, n_iter, trace_logl, trace_gnorm = fit_multistart(
+            fitter, theta0=theta0, n_seeds=args.n_seeds,
+            use_lax=_use_lax, maxiter=args.maxiter,
         )
     except Exception as exc:
         print(f"[FAIL] optimization failed for V={args.voltage}V: {exc}", flush=True)
@@ -215,6 +221,9 @@ def main():
     phys = spe_phys(fitter, spe_args, spe_err)
     dc_phys = dark_phys(fitter, theta, theta_err)
     chi2, ndf, p_val = compute_chi2(fitter, theta)
+
+    print(f"[MLE ] final theta — V={args.voltage}V", flush=True)
+    print_theta_table(fitter, theta, "MLE ", theta_err)
 
     print(
         f"[CHI2] V={args.voltage}V  chi2={chi2:.1f}  ndf={ndf}  p={p_val:.3f}",

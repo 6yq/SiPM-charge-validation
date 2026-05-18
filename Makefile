@@ -9,8 +9,12 @@ export PYTHONPATH:=$(FITTER_DIR):$(JAX_DEP)
 VSTEMS:=53 53.5 54 54.5 55 55.5 56 56.5 57 57.5 58 58.5 59 59.5 60
 DATA_FILES:=$(VSTEMS:%=data/PCB6_MPPC_%V_histo.txt)
 RESULT_FILES:=$(VSTEMS:%=results/PCB6_MPPC_%V.json)
+SCAN_FILES:=$(VSTEMS:%=figures/PCB6_MPPC_%V_scan.pdf)
+FIT_SCRIPTS:=scripts/fit.py scripts/fit_io.py scripts/fit_init.py \
+             scripts/fit_build.py scripts/fit_optim.py \
+             scripts/fit_analysis.py scripts/fit_plot.py
 
-.PHONY: all data fit validate clean
+.PHONY: all data fit scan validate clean
 
 all: results/fit_results.csv
 
@@ -29,12 +33,19 @@ $(DATA_FILES): .data.stamp
 
 fit: $(RESULT_FILES)
 
-results/PCB6_MPPC_%V.json: data/PCB6_MPPC_%V_histo.txt
+results/PCB6_MPPC_%V.json: data/PCB6_MPPC_%V_histo.txt $(FIT_SCRIPTS)
 	mkdir -p results figures
 	{ time $(PYTHON) scripts/fit.py $< -o $@ \
 		--out-fig figures/PCB6_MPPC_$*V.pdf \
 		--voltage $* \
 		--dcr-auto ; } 1>$@.log 2>$@.time.log
+
+# ─── scan ────────────────────────────────────────────────────────────────────
+
+scan: $(SCAN_FILES)
+
+figures/PCB6_MPPC_%V_scan.pdf: results/PCB6_MPPC_%V.json scripts/fit_scan.py $(FIT_SCRIPTS)
+	$(PYTHON) scripts/fit_scan.py $< --out-fig $@
 
 # ─── validate ────────────────────────────────────────────────────────────────
 

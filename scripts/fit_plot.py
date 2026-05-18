@@ -8,12 +8,82 @@ def _finite_or_zero(v):
     return f if np.isfinite(f) else 0.0
 
 
+def _rebin(hist, bins, comps, ys, target=250):
+    """Merge adjacent bins for display; returns (hist, bins, comps, ys)."""
+    n = len(hist)
+    if n <= target:
+        return hist, bins, comps, ys
+    factor = max(2, n // target)
+    n_trim = (n // factor) * factor
+
+    def _merge(arr):
+        return arr[:n_trim].reshape(-1, factor).sum(axis=1)
+
+    new_hist = _merge(hist)
+    new_ys = _merge(ys) if ys is not None else None
+    new_comps = [_merge(c) for c in comps]
+    new_bins = np.concatenate([bins[:n_trim:factor], [bins[n_trim]]])
+    return new_hist, new_bins, new_comps, new_ys
+
+
+def _build_extra_info(rec):
+    """Build physics-parameter annotation list for the legend."""
+    spe = rec.get("spe", {})
+    ped = rec.get("ped", {})
+    lines = []
+
+    gm = spe.get("spe_mean", float("nan"))
+    gm_err = spe.get("spe_mean_err", float("nan"))
+    if np.isfinite(gm):
+        if np.isfinite(gm_err) and gm_err > 0:
+            lines.append(rf"$G^*={gm:.2f}\pm{gm_err:.2f}$")
+        else:
+            lines.append(rf"$G^*={gm:.2f}$")
+
+    s0 = ped.get("ped_sigma", float("nan"))
+    s0_err = ped.get("ped_sigma_err", float("nan"))
+    if np.isfinite(s0):
+        if np.isfinite(s0_err) and s0_err > 0:
+            lines.append(rf"$\sigma_0={s0:.2f}\pm{s0_err:.2f}$")
+        else:
+            lines.append(rf"$\sigma_0={s0:.2f}$")
+
+    rho = spe.get("rho", float("nan"))
+    rho_err = spe.get("rho_err", float("nan"))
+    if np.isfinite(rho):
+        if np.isfinite(rho_err) and rho_err > 0:
+            lines.append(rf"$\rho={rho:.4f}\pm{rho_err:.4f}$")
+        else:
+            lines.append(rf"$\rho={rho:.4f}$")
+
+    beta = spe.get("beta", float("nan"))
+    beta_err = spe.get("beta_err", float("nan"))
+    if np.isfinite(beta):
+        if np.isfinite(beta_err) and beta_err > 0:
+            lines.append(rf"$\beta={beta:.4f}\pm{beta_err:.4f}$")
+        else:
+            lines.append(rf"$\beta={beta:.4f}$")
+
+    dc = rec.get("dark_count", {})
+    if dc.get("enabled"):
+        mu_d = dc.get("mu_dark", float("nan"))
+        mu_d_err = dc.get("mu_dark_err", float("nan"))
+        if np.isfinite(mu_d):
+            if np.isfinite(mu_d_err) and mu_d_err > 0:
+                lines.append(rf"$\mu_\mathrm{{dark}}={mu_d:.3g}\pm{mu_d_err:.2g}$")
+            else:
+                lines.append(rf"$\mu_\mathrm{{dark}}={mu_d:.3g}$")
+
+    return lines
+
+
 def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gnorm):
-    """PDF with charge spectrum fit (page 1) and optimizer trace (page 2, CPU only)."""
+    """PDF: charge spectrum fit, optimizer trace (CPU only), likelihood scans."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
+    from fit_scan import append_to_pdf
 
     ly = fitter.layout
     lam = float(theta[ly["lam"].start]) + fitter.lam_dc
@@ -22,76 +92,86 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
     n_pe = n_max(lam)
     hist = fitter.hist.astype(float)
     bins = fitter.bins
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    bin_width = float(bins[1] - bins[0])
+    bin_centers_full = (bins[:-1] + bins[1:]) / 2
 
-    xsp = fitter.grid.xsp
-    smooth = fitter.estimate_density(theta) * bin_width
-    ys = fitter.estimate_bin_counts(theta)
-    comps = [fitter.estimate_component_counts(theta, k) for k in range(1, n_pe + 1)]
+    # ── rebin for display ──────────────────────────────────────────────────
+    ys_full = fitter.estimate_bin_counts(theta)
+    comps_full = [fitter.estimate_component_counts(theta, k) for k in range(1, n_pe + 1)]
     labels = [f"{k} PE" for k in range(1, n_pe + 1)]
 
-    spe = rec["spe"]
+    hist_d, bins_d, comps_d, ys_d = _rebin(hist, bins, comps_full, ys_full, target=250)
+    bin_centers_d = (bins_d[:-1] + bins_d[1:]) / 2
+
+    # ── smooth: normalize by the display bin width, not the original ───────
+    display_bin_width = float(bins_d[1] - bins_d[0])
+    smooth_full = fitter.estimate_density(theta) * display_bin_width
+    xsp = fitter.grid.xsp
+
+    # ── clip smooth/comps curves to ROI [Q0 − 2σ₀, Qmax] ──────────────────
+    # Only the red fit line and component lines are clipped; histogram is full.
+    ped_mean_v = rec["ped"]["ped_mean"]
+    ped_sigma_v = rec["ped"]["ped_sigma"]
+    x_lo_roi = ped_mean_v - 2.0 * ped_sigma_v
+    x_hi_roi = float(bin_centers_full[-1])
+
+    mask_sm = (xsp >= x_lo_roi) & (xsp <= x_hi_roi)
+    xsp_d = xsp[mask_sm]
+    smooth_d = smooth_full[mask_sm]
+
+    # Clip comp lines to the same ROI (use rebinned bin centers)
+    mask_bc = (bin_centers_d >= x_lo_roi) & (bin_centers_d <= x_hi_roi)
+    comps_roi = [c[mask_bc] for c in comps_d]
+    bin_centers_roi = bin_centers_d[mask_bc]
+
     occ = float(np.clip(1.0 - np.exp(-lam), 0.0, 1.0 - 1e-9))
     occ_std = float(lam_err_raw * np.exp(-lam)) if np.isfinite(lam_err_raw) else 0.0
-    spe_res_pct = spe["spe_res"] * 100.0
-    spe_params = np.array(theta[ly["spe"]])
-
-    gm_std = _finite_or_zero(spe.get("spe_mean_err", float("nan"))) or None
-    spe_sigma_std = _finite_or_zero(spe.get("spe_sigma_err", float("nan")))
-    spe_res_std = _finite_or_zero(spe.get("spe_res_err", 0.0) * 100.0)
-
-    dcr_info = rec.get("dark_count", {})
-    mu_str = f"  μ_dark={dcr_info['mu_dark']:.3g}" if dcr_info.get("enabled") else ""
+    extra_info = _build_extra_info(rec)
 
     with PdfPages(out_path) as pp:
         # ── page 1: charge spectrum ──────────────────────────────────────────
-        fig, ax_main, ax_resid, ax_leg = make_figure(n_comps=len(comps))
+        fig, ax_main, ax_resid, ax_leg = make_figure(n_comps=len(comps_roi))
         plot_histogram_with_fit(
-            bins=bins,
-            hist=hist,
-            xsp=xsp,
-            smooth=smooth,
-            bin_centers=bin_centers,
-            comps=comps,
+            bins=bins_d,
+            hist=hist_d,
+            xsp=xsp_d,
+            smooth=smooth_d,
+            bin_centers=bin_centers_roi,
+            comps=comps_roi,
             labels=labels,
-            params=spe_params,
+            params=np.array(theta[ly["spe"]]),
             occ=occ,
             occ_std=occ_std,
-            ped_mean=rec["ped"]["ped_mean"],
-            gm=spe["spe_mean"],
-            gm_std=gm_std,
-            spe_sigma=spe["spe_sigma"],
-            spe_sigma_std=spe_sigma_std,
-            spe_res=spe_res_pct,
-            spe_res_std=spe_res_std,
+            ped_mean=ped_mean_v,
+            gm=rec["spe"]["spe_mean"],
             chiSq=rec["chi_sq"],
             ndf=rec["ndf"],
-            ys=ys,
+            ys=ys_d[mask_bc],
             logscale=True,
             ax_main=ax_main,
             ax_resid=ax_resid,
             ax_leg=ax_leg,
             fig=fig,
+            extra_info=extra_info,
         )
-        ax_main.set_title(f"Hamamatsu PCB6  {rec['voltage']} V{mu_str}")
+        ax_main.set_title(f"Hamamatsu PCB6  {rec['voltage']} V")
         ax_main.set_ylim(bottom=0.5)
 
-        pull = (hist - ys) / np.sqrt(np.maximum(ys, 1.0))
+        # ── pull panel (full rebinned range) ─────────────────────────────────
+        pull = (hist_d - ys_d) / np.sqrt(np.maximum(ys_d, 1.0))
         ax_resid.cla()
         ax_resid.axhline(0, color="gray", lw=1, ls="--")
         ax_resid.axhline(+1, color="C0", lw=0.6, ls=":")
         ax_resid.axhline(-1, color="C0", lw=0.6, ls=":")
         ax_resid.axhline(+3, color="C1", lw=0.6, ls=":")
         ax_resid.axhline(-3, color="C1", lw=0.6, ls=":")
-        ax_resid.plot(bin_centers, pull, "o", color="black", ms=2)
+        ax_resid.plot(bin_centers_d, pull, "o", color="black", ms=2)
         ax_resid.set_ylabel("Pull")
         ax_resid.set_xlabel("Q")
         ax_resid.grid(True, alpha=0.3)
         pp.savefig(fig)
         plt.close(fig)
 
-        # ── page 2: optimizer trace (empty on GPU/lax path) ──────────────────
+        # ── page 2: optimizer trace (CPU path only) ──────────────────────────
         if len(trace_logl) > 1:
             fig, axes = plt.subplots(2, 1, figsize=(7, 5), sharex=True)
             axes[0].plot(trace_logl, lw=1)
@@ -104,5 +184,8 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
             axes[1].grid(True, alpha=0.3)
             pp.savefig(fig)
             plt.close(fig)
+
+        # ── page 3+: likelihood scan pages ──────────────────────────────────
+        append_to_pdf(pp, fitter, theta, theta_err, rec)
 
     print(f"[PLOT] {out_path}", flush=True)

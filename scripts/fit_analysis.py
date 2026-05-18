@@ -86,6 +86,47 @@ def compute_chi2(fitter, theta):
     return chi2, ndf, p_val
 
 
+def print_theta_table(fitter, theta, label, theta_err=None):
+    """Print raw + physical parameter values to stdout, one line per parameter."""
+    names = list(fitter.param_names)
+    theta = np.asarray(theta, dtype=float)
+    errs = np.asarray(theta_err, dtype=float) if theta_err is not None else None
+
+    a_idx = names.index("a_logSigma") if "a_logSigma" in names else None
+
+    for i, name in enumerate(names):
+        raw = float(theta[i])
+        err = float(errs[i]) if errs is not None else None
+
+        if name == "a_logSigma":
+            phys = f"sigma={np.exp(raw):.3f}"
+        elif name == "b_logDiff":
+            if a_idx is not None:
+                phys = f"spe_mean={np.exp(float(theta[a_idx])) + np.exp(raw):.3f}"
+            else:
+                phys = f"exp={np.exp(raw):.3f}"
+        elif name == "log_rho":
+            phys = f"rho={np.exp(raw):.5f}"
+        elif name == "logit_beta":
+            phys = f"beta={1.0 / (1.0 + np.exp(-raw)):.5f}"
+        elif name == "log_mu_dark":
+            phys = f"mu_dark={np.exp(raw):.4g}"
+        elif name == "log_A":
+            phys = f"A={np.exp(raw):.0f}"
+        else:
+            phys = ""
+
+        if err is not None and np.isfinite(err) and err > 0:
+            err_str = f"±{err:.4f}"
+        else:
+            err_str = ""
+
+        print(
+            f"[{label}]   {name:<18s}  {raw:+12.5f}  {err_str:<12s}  {phys}",
+            flush=True,
+        )
+
+
 def compute_cov(fitter, theta):
     try:
         H = np.asarray(jax.hessian(fitter._logl_from_theta)(jnp.asarray(theta)))

@@ -19,13 +19,15 @@ def make_fitter(
     dark_T_gate=200.0,
     dark_t0_pre=100.0,
     dark_tau_slow=100.0,
+    bin_edges=None,
 ):
     """Build one NegBinBetaAPFitter with optional dark-count block."""
     counts_int = np.round(counts).astype(int)
     A = int(counts_int.sum())
 
     dq = float(np.median(np.diff(charges)))
-    bin_edges = np.append(charges - dq / 2, charges[-1] + dq / 2)
+    if bin_edges is None:
+        bin_edges = np.append(charges - dq / 2, charges[-1] + dq / 2)
     Q_raw = np.repeat(charges, counts_int)
     q_min = min(float(charges[0]), ped_mean - 10 * ped_sigma)
 
