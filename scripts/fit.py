@@ -15,6 +15,7 @@ import scipy.stats
 
 from fitter.core.base import ParamBlock
 from fitter.models.afterpulse import NegBinBetaAPFitter
+from fitter.models.dark_count import make_dark_ft, make_dark_block
 from fitter.models.gen_tweedie import reparam_from_spe
 from fitter.tests.plot import make_figure, n_max, plot_histogram_with_fit
 
@@ -54,6 +55,29 @@ def estimate_init(charges, counts):
     return d["ped_mean"], d["ped_sigma"], d["spe_mean"], d["spe_sigma"], d["lam_est"]
 
 
+def estimate_dark_mu(charges, counts, ped_mean, spe_mean, T_gate, t0_pre, tau_slow):
+    """Rough mu_dark estimate from 0PE-1PE valley density (PeakOTron-style init).
+
+    At K=0.5 the deterministic dark-pulse density is f_d^(1)(0.5) = 4*tau/(T+t0),
+    so mu_dark = (dN_dark/dK * (T+t0)) / (4*tau*N_total).
+    """
+    K = (np.asarray(charges, float) - float(ped_mean)) / max(float(spe_mean), 1.0)
+    mask = (K >= 0.45) & (K <= 0.55)
+    n_valley = float(counts[mask].sum()) if mask.sum() > 0 else 0.0
+    n_total = float(counts.sum())
+    if n_total <= 0 or n_valley <= 0 or mask.sum() < 2:
+        return 0.1
+    # dN/dK at K=0.5 (counts per unit K per total event)
+    dK_bin = 0.1 / float(mask.sum())
+    dN_dK = (n_valley / n_total) / dK_bin
+    # Invert f_d^(1)(K=0.5) = 4*tau/(T+t0)
+    denominator = 4.0 * max(tau_slow, 1e-12) * max(n_total, 1.0)
+    mu_dark = dN_dK * (T_gate + t0_pre) / max(4.0 * tau_slow, 1e-12)
+    # PeakOTron self-consistency correction (small for typical mu_dark)
+    mu_dark *= float(np.exp(min(mu_dark * tau_slow / max(T_gate + t0_pre, 1.0), 5.0)))
+    return float(np.clip(mu_dark, 1e-4, 10.0))
+
+
 def _logit(p):
     p = float(np.clip(p, 1e-12, 1.0 - 1e-12))
     return log(p / (1.0 - p))
@@ -82,7 +106,7 @@ def load_initial_values(path):
 
     Accepted forms:
       * {"theta": [...]} with the full raw optimiser vector.
-      * A previous fit result JSON with nested "ped", "spe", and "lam" fields.
+      * A previous fit result JSON with nested "ped", "spe", "lam", "dark_count" fields.
       * A flat mapping with raw parameter names or physical names.
     """
     if path is None:
@@ -108,7 +132,7 @@ def theta_from_initial_values(fitter, initial_values):
     ped = initial_values.get("ped", {})
     spe = initial_values.get("spe", {})
 
-    # Raw parameter names are accepted directly for expert use.
+    # Raw parameter names accepted directly for expert use.
     for name, value in initial_values.items():
         if name in fitter.param_names and np.isscalar(value):
             theta[_theta_index(fitter, name)] = float(value)
@@ -150,7 +174,37 @@ def theta_from_initial_values(fitter, initial_values):
     if lam is not None:
         theta[lam_idx] = float(lam) - fitter.lam_dc
 
+    # Dark count initial value
+    if "dark" in fitter.layout:
+        dark_sl = fitter.layout["dark"]
+        dc = initial_values.get("dark_count", {})
+        mu_dark = dc.get("mu_dark", initial_values.get("mu_dark"))
+        log_mu_dark = dc.get("log_mu_dark", initial_values.get("log_mu_dark"))
+        if mu_dark is not None:
+            theta[dark_sl.start] = log(float(mu_dark))
+        elif log_mu_dark is not None:
+            theta[dark_sl.start] = float(log_mu_dark)
+
     return _clip_theta_to_bounds(fitter, theta)
+
+
+# ─── DCR voltage policy ───────────────────────────────────────────────────────
+
+
+def dcr_policy(voltage):
+    """Return DCR fitting strategy for a given overvoltage.
+
+    Returns one of:
+      "off"   — DCR must be zero (0PE/1PE overlap; cannot constrain DCR)
+      "weak"  — DCR weakly constrained; treat result with caution
+      "float" — DCR can be floated freely
+    """
+    if voltage <= 53.0:
+        return "off"
+    elif voltage <= 54.0:
+        return "weak"
+    else:
+        return "float"
 
 
 # ─── fitter construction ──────────────────────────────────────────────────────
@@ -164,8 +218,12 @@ def make_fitter(
     spe_mean,
     spe_sigma,
     lam_init=None,
+    dark_mu_init=None,
+    dark_T_gate=200.0,
+    dark_t0_pre=100.0,
+    dark_tau_slow=100.0,
 ):
-    """Build one NegBinBetaAPFitter with physical-only bounds."""
+    """Build one NegBinBetaAPFitter with optional dark-count block."""
     counts_int = np.round(counts).astype(int)
     A = int(counts_int.sum())
 
@@ -190,13 +248,19 @@ def make_fitter(
         names=["a_logSigma", "b_logDiff", "xi", "log_rho", "logit_beta"],
         init=np.array([a0, b0, 0.04, log_rho0, logit_beta0], dtype=float),
         bounds=[
-            (log(1.0), log(1e4)),  # sigma ∈ (1, 10000) ADC
-            (log(1.0), log(1e4)),  # mu-sigma ∈ (1, 10000) ADC
-            (1e-4, 1.0 - 1e-4),  # xi ∈ (0,1)
-            (-15.0, -0.01),  # rho ∈ (7e-7, 0.99)
-            (-15.0, 15.0),  # beta ∈ (3e-7, 1-3e-7)
+            (log(1.0), log(1e4)),   # sigma ∈ (1, 10000) ADC
+            (log(1.0), log(1e4)),   # mu-sigma ∈ (1, 10000) ADC
+            (1e-4, 1.0 - 1e-4),    # xi ∈ (0,1)
+            (-15.0, -0.01),         # rho ∈ (7e-7, 0.99)
+            (-15.0, 15.0),          # beta ∈ (3e-7, 1-3e-7)
         ],
     )
+
+    dark_block = None
+    dark_ft_fn = None
+    if dark_mu_init is not None:
+        dark_ft_fn = make_dark_ft(dark_T_gate, dark_t0_pre, dark_tau_slow)
+        dark_block = make_dark_block(mu_dark_init=float(dark_mu_init))
 
     return NegBinBetaAPFitter(
         Q_raw=Q_raw,
@@ -205,6 +269,8 @@ def make_fitter(
         q_min=q_min,
         extra_block=extra_block,
         spe_block=spe_block,
+        dark_block=dark_block,
+        dark_ft=dark_ft_fn,
         lam_init=lam_init,
         mode="binned",
     )
@@ -220,19 +286,12 @@ def fit_optax(
     tol_grad=1e-5,
     tol_nll=1e-8,
     memory_size=10,
-    optimizer_name="zoom",
-    use_linesearch=None,
 ):
-    """Optimize via optax L-BFGS (CPU, Python loop).
-
-    optimizer_name="zoom"  — optax.lbfgs default strong-Wolfe/zoom line search.
-    optimizer_name="fixed" — pure L-BFGS step, no line search.
+    """Optimize via optax L-BFGS + Armijo backtracking linesearch (CPU, Python loop).
 
     Returns (theta, logl, converged, n_iter, trace_logl, trace_gnorm).
     Bounds enforced by projected gradient (clip after apply_updates).
     """
-    if use_linesearch is not None:
-        optimizer_name = "zoom" if use_linesearch else "fixed"
     if theta0 is None:
         theta0 = fitter.init.copy()
     theta0_j = jnp.asarray(theta0, dtype=jnp.float64)
@@ -244,26 +303,22 @@ def fit_optax(
 
     neg_logl_fn_jit = jax.jit(neg_logl_fn)
 
-    if optimizer_name == "zoom":
-        optimizer = optax.lbfgs(memory_size=memory_size, scale_init_precond=True)
-    elif optimizer_name == "fixed":
-        optimizer = optax.lbfgs(
-            memory_size=memory_size, scale_init_precond=True, linesearch=None
-        )
-    else:
-        raise ValueError("optimizer_name must be one of 'zoom' or 'fixed'")
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(max_norm=1e6),
+        optax.scale_by_lbfgs(memory_size=memory_size, scale_init_precond=True),
+        optax.scale(-1.0),
+        optax.scale_by_backtracking_linesearch(
+            max_backtracking_steps=30,
+            slope_rtol=1e-4,
+            decrease_factor=0.5,
+            increase_factor=1.5,
+        ),
+    )
 
     theta = theta0_j
     opt_state = optimizer.init(theta)
     vg_fn = jax.jit(jax.value_and_grad(neg_logl_fn))
-    value_and_grad = optax.value_and_grad_from_state(neg_logl_fn_jit)
-
-    def eval_value_and_grad(params, state):
-        if optimizer_name == "fixed":
-            return vg_fn(params)
-        return value_and_grad(params, state=state)
-
-    value, grad = eval_value_and_grad(theta, opt_state)
+    value, grad = vg_fn(theta)
 
     trace_logl = []
     trace_gnorm = []
@@ -279,8 +334,7 @@ def fit_optax(
 
         if not np.isfinite(logl_i) or not np.isfinite(gnorm_i):
             print(
-                f"[OPTAX] step {i} produced non-finite value/gradient"
-                f"  logl={logl_i}  |g|={gnorm_i}",
+                f"[OPTAX] step {i} non-finite  logl={logl_i}  |g|={gnorm_i}",
                 flush=True,
             )
             break
@@ -310,7 +364,7 @@ def fit_optax(
         theta_new = optax.apply_updates(theta, updates)
         theta_new = jnp.clip(theta_new, bounds_lo, bounds_hi)
         theta = theta_new
-        value, grad = eval_value_and_grad(theta, opt_state)
+        value, grad = vg_fn(theta)
         n_iter = i + 1
 
         if len(trace_logl) > 0 and -float(value) < trace_logl[-1] - 1e-6:
@@ -328,239 +382,6 @@ def fit_optax(
         np.array(trace_logl),
         np.array(trace_gnorm),
     )
-
-
-# ─── likelihood-space exploration ────────────────────────────────────────────
-
-
-def _physical_seed_summary(fitter, theta):
-    ly = fitter.layout
-    spe = theta[ly["spe"]]
-    mean_sigma = np.exp(float(spe[0]))
-    mean = mean_sigma + np.exp(float(spe[1]))
-    rho = np.exp(float(spe[3]))
-    beta = _sigmoid(float(spe[4]))
-    return {
-        "lam": float(theta[ly["lam"].start] + fitter.lam_dc),
-        "xi": float(spe[2]),
-        "rho": float(rho),
-        "beta": float(beta),
-        "ap_mean_fraction": float(beta * (1.0 - rho)),
-        "spe_mean": float(mean),
-        "spe_sigma": float(mean_sigma),
-    }
-
-
-def _set_seed_params(fitter, theta, lam=None, rho=None, beta=None, xi=None):
-    ly = fitter.layout
-    out = np.asarray(theta, dtype=float).copy()
-    spe_start = ly["spe"].start
-    if lam is not None:
-        out[ly["lam"].start] = float(lam) - fitter.lam_dc
-    if xi is not None:
-        out[spe_start + 2] = float(xi)
-    if rho is not None:
-        out[spe_start + 3] = log(float(rho))
-    if beta is not None:
-        out[spe_start + 4] = _logit(float(beta))
-    return _clip_theta_to_bounds(fitter, out)
-
-
-def _scout_ranges(fitter, base_theta, lam_est):
-    ly = fitter.layout
-    spe_start = ly["spe"].start
-    lam_idx = ly["lam"].start
-    rho_idx = spe_start + 3
-    beta_idx = spe_start + 4
-    xi_idx = spe_start + 2
-
-    lam0 = float(lam_est) if lam_est is not None and lam_est > 0 else float(base_theta[lam_idx])
-    lam0 = max(lam0, 0.02)
-    lam_lo = max(fitter.bounds[lam_idx][0] + fitter.lam_dc, lam0 * np.exp(-1.25))
-    lam_hi = min(fitter.bounds[lam_idx][1] + fitter.lam_dc, lam0 * np.exp(1.25))
-
-    rho_lo = max(fitter.bounds[rho_idx][0], log(5e-5))
-    rho_hi = min(fitter.bounds[rho_idx][1], log(0.25))
-    beta_lo = max(fitter.bounds[beta_idx][0], _logit(0.01))
-    beta_hi = min(fitter.bounds[beta_idx][1], _logit(0.85))
-    xi_lo = max(fitter.bounds[xi_idx][0], 0.005)
-    xi_hi = min(fitter.bounds[xi_idx][1], 0.25)
-
-    return {
-        "log_lam": (log(lam_lo), log(lam_hi)),
-        "log_rho": (rho_lo, rho_hi),
-        "logit_beta": (beta_lo, beta_hi),
-        "xi": (xi_lo, xi_hi),
-    }
-
-
-def make_seed_candidates(fitter, base_theta, lam_est=None, n_probe=64, seed=12345):
-    """Build deterministic scout seeds for degenerate AP/count directions."""
-    candidates = [{"label": "base", "theta": _clip_theta_to_bounds(fitter, base_theta)}]
-    ranges = _scout_ranges(fitter, base_theta, lam_est)
-    lam0 = float(candidates[0]["theta"][fitter.layout["lam"].start] + fitter.lam_dc)
-    xi0 = float(candidates[0]["theta"][fitter.layout["spe"].start + 2])
-
-    manual = [
-        ("small-ap", lam0, 0.005, 0.05, xi0),
-        ("high-rho-low-charge", lam0, 0.12, 0.04, xi0),
-        ("low-rho-high-charge", lam0, 0.01, 0.60, xi0),
-        ("high-dispersion", lam0, 0.03, 0.20, 0.18),
-    ]
-    for label, lam, rho, beta, xi in manual:
-        candidates.append(
-            {"label": label, "theta": _set_seed_params(fitter, base_theta, lam, rho, beta, xi)}
-        )
-
-    if n_probe <= 0:
-        return candidates
-
-    sampler = scipy.stats.qmc.Sobol(d=4, scramble=True, seed=int(seed))
-    n_sobol = 1 << int(np.ceil(np.log2(max(n_probe, 2))))
-    u = sampler.random_base2(int(np.log2(n_sobol)))[:n_probe]
-
-    log_lam_lo, log_lam_hi = ranges["log_lam"]
-    log_rho_lo, log_rho_hi = ranges["log_rho"]
-    beta_lo, beta_hi = ranges["logit_beta"]
-    xi_lo, xi_hi = ranges["xi"]
-
-    for i, row in enumerate(u):
-        lam = np.exp(log_lam_lo + row[0] * (log_lam_hi - log_lam_lo))
-        rho = np.exp(log_rho_lo + row[1] * (log_rho_hi - log_rho_lo))
-        beta = _sigmoid(beta_lo + row[2] * (beta_hi - beta_lo))
-        xi = xi_lo + row[3] * (xi_hi - xi_lo)
-        candidates.append(
-            {
-                "label": f"sobol-{i:03d}",
-                "theta": _set_seed_params(fitter, base_theta, lam, rho, beta, xi),
-            }
-        )
-
-    return candidates
-
-
-def rank_seed_candidates(fitter, candidates, n_starts=4):
-    """Rank seed candidates by jitted batched likelihood and gradient norm."""
-    theta_stack = jnp.asarray([c["theta"] for c in candidates], dtype=jnp.float64)
-
-    def neg_logl_fn(t):
-        return -fitter._logl_from_theta(t)
-
-    batched_vg = jax.jit(jax.vmap(jax.value_and_grad(neg_logl_fn)))
-    values, grads = batched_vg(theta_stack)
-    values = np.asarray(values, dtype=float)
-    gnorms = np.linalg.norm(np.asarray(grads, dtype=float), axis=1)
-
-    ranked = []
-    for cand, value, gnorm in zip(candidates, values, gnorms):
-        report = {
-            "label": cand["label"],
-            "theta": np.asarray(cand["theta"], dtype=float),
-            "start_logl": -float(value),
-            "start_gnorm": float(gnorm),
-            **_physical_seed_summary(fitter, cand["theta"]),
-        }
-        if np.isfinite(value) and np.isfinite(gnorm):
-            ranked.append(report)
-
-    ranked.sort(key=lambda r: (-r["start_logl"], r["start_gnorm"]))
-    return ranked[: max(1, int(n_starts))]
-
-
-def fit_multistart(
-    charges,
-    counts,
-    ped_mean,
-    ped_sigma,
-    spe_mean,
-    spe_sigma,
-    lam_est=None,
-    maxiter=2000,
-    initial_values=None,
-    n_probe=64,
-    n_starts=4,
-    optimizer_name="zoom",
-    scout_seed=12345,
-):
-    """Single fitter, scout seeds, optimize best-ranked basins."""
-    fitter = make_fitter(
-        charges,
-        counts,
-        ped_mean,
-        ped_sigma,
-        spe_mean,
-        spe_sigma,
-        lam_init=lam_est,
-    )
-    base_theta = theta_from_initial_values(fitter, initial_values)
-
-    # warm up JIT once on default init
-    _ = fitter._logl_jit(jnp.asarray(base_theta))
-
-    candidates = make_seed_candidates(
-        fitter, base_theta, lam_est=lam_est, n_probe=n_probe, seed=scout_seed
-    )
-    seeds = rank_seed_candidates(fitter, candidates, n_starts=n_starts)
-    print(
-        f"[SCOUT] evaluated={len(candidates)}  optimizing={len(seeds)}"
-        f"  ap_model=beta  optimizer={optimizer_name}",
-        flush=True,
-    )
-    for seed_info in seeds:
-        print(
-            f"[SCOUT] {seed_info['label']:>18s}"
-            f"  logl0={seed_info['start_logl']:.2f}"
-            f"  |g|0={seed_info['start_gnorm']:.3g}"
-            f"  lam={seed_info['lam']:.3g}"
-            f"  rho={seed_info['rho']:.3g}"
-            f"  beta={seed_info['beta']:.3g}"
-            f"  xi={seed_info['xi']:.3g}",
-            flush=True,
-        )
-
-    best_logl = -np.inf
-    best_result = (
-        None  # (fitter, theta, logl, trace_logl, trace_gnorm, converged, n_iter)
-    )
-    seed_reports = []
-
-    for seed_info in seeds:
-        try:
-            theta, logl, conv, n_it, tr_l, tr_g = fit_optax(
-                fitter,
-                theta0=seed_info["theta"],
-                maxiter=maxiter,
-                optimizer_name=optimizer_name,
-            )
-            tag = "[new best]" if logl > best_logl else ""
-            print(
-                f"[FITSEED] {seed_info['label']}"
-                f"  logl={logl:.2f}  converged={conv}  {tag}",
-                flush=True,
-            )
-            report = {k: v for k, v in seed_info.items() if k != "theta"}
-            report.update(
-                {
-                    "optimized_logl": float(logl),
-                    "optimized_gnorm": float(tr_g[-1]) if len(tr_g) else float("nan"),
-                    "converged": bool(conv),
-                    "n_iter": int(n_it),
-                }
-            )
-            seed_reports.append(report)
-            if logl > best_logl:
-                best_logl = logl
-                best_result = (fitter, theta, logl, tr_l, tr_g, conv, n_it, seed_reports)
-        except Exception as exc:
-            print(f"[WARN] seed {seed_info['label']} failed: {exc}", flush=True)
-        finally:
-            jax.clear_caches()
-
-    if best_result is not None:
-        fitter, theta, logl, tr_l, tr_g, conv, n_it, _ = best_result
-        best_result = (fitter, theta, logl, tr_l, tr_g, conv, n_it, seed_reports)
-
-    return best_result
 
 
 # ─── post-fit quantities ──────────────────────────────────────────────────────
@@ -589,9 +410,7 @@ def spe_phys(fitter, spe_args, spe_err):
     r["ap_charge_mean_err"] = ap_charge_mean_err
     if "beta_shape_b" in r:
         mean_fraction = beta * (1.0 - rho)
-        dmean_fraction = float(
-            np.sqrt(((1.0 - rho) * dbeta) ** 2 + (beta * drho) ** 2)
-        )
+        dmean_fraction = float(np.sqrt(((1.0 - rho) * dbeta) ** 2 + (beta * drho) ** 2))
         r["beta_shape_b_err"] = float(
             2.0 * dmean_fraction / (mean_fraction + 1e-30) ** 2
         )
@@ -608,6 +427,28 @@ def spe_phys(fitter, spe_args, spe_err):
         )
     )
     return r
+
+
+def dark_phys(fitter, theta, theta_err):
+    """Extract dark-count physical quantities from fit result.
+
+    Returns a dict with mu_dark and its uncertainty; returns None when
+    no dark block is present.
+    """
+    if "dark" not in fitter.layout:
+        return None
+    dark_sl = fitter.layout["dark"]
+    log_mu = float(theta[dark_sl.start])
+    log_mu_err = float(theta_err[dark_sl.start])
+    mu_dark = float(np.exp(log_mu))
+    mu_dark_err = float(mu_dark * log_mu_err) if np.isfinite(log_mu_err) else float("nan")
+    return {
+        "enabled": True,
+        "mu_dark": mu_dark,
+        "mu_dark_err": mu_dark_err,
+        "log_mu_dark": log_mu,
+        "log_mu_dark_err": log_mu_err,
+    }
 
 
 def compute_chi2(fitter, theta):
@@ -645,76 +486,6 @@ def compute_cov(fitter, theta):
         return np.full((n, n), float("nan")), np.full((n, n), float("nan"))
 
 
-# ─── likelihood scan ─────────────────────────────────────────────────────────
-
-
-def scan_logl(fitter, theta, theta_err, param_idx, n_points=61, sigma_range=4.0):
-    """Scan logl vs one parameter (others held at MLE)."""
-    center = float(theta[param_idx])
-    err = (
-        float(theta_err[param_idx])
-        if np.isfinite(theta_err[param_idx])
-        else abs(center) * 0.2
-    )
-    if err <= 0 or not np.isfinite(err):
-        err = abs(center) * 0.2 or 0.5
-    lo = center - sigma_range * err
-    hi = center + sigma_range * err
-    # respect fitter bounds
-    blo, bhi = fitter.bounds[param_idx]
-    lo = max(lo, blo)
-    hi = min(hi, bhi)
-    scan_vals = np.linspace(lo, hi, n_points)
-    scan_logls = []
-    for v in scan_vals:
-        t = theta.copy()
-        t[param_idx] = v
-        scan_logls.append(fitter.logl(t))
-    return scan_vals, np.array(scan_logls)
-
-
-def profile_scan_spec(fitter, name):
-    ly = fitter.layout
-    spe_start = ly["spe"].start
-    specs = {
-        "lam": (ly["lam"].start, lambda x: x + fitter.lam_dc, "lambda"),
-        "xi": (spe_start + 2, lambda x: x, "xi"),
-        "rho": (spe_start + 3, np.exp, "rho"),
-        "beta": (spe_start + 4, lambda x: 1.0 / (1.0 + np.exp(-x)), "beta"),
-    }
-    if name in specs:
-        return specs[name]
-    if name in fitter.param_names:
-        idx = _theta_index(fitter, name)
-        return idx, lambda x: x, name
-    raise ValueError(f"Unknown profile scan parameter {name!r}")
-
-
-def make_profile_scans(fitter, theta, theta_err, names, n_points=61):
-    scans = {}
-    for name in names:
-        if not name:
-            continue
-        idx, transform, label = profile_scan_spec(fitter, name)
-        try:
-            scan_vals, scan_logls = scan_logl(
-                fitter, theta, theta_err, idx, n_points=n_points
-            )
-            logl_max = float(np.max(scan_logls))
-            x_vals = np.asarray([transform(v) for v in scan_vals], dtype=float)
-            scans[name] = {
-                "label": label,
-                "param_index": int(idx),
-                "raw": [float(x) for x in scan_vals],
-                "x": [float(x) for x in x_vals],
-                "logl": [float(x) for x in scan_logls],
-                "delta_logl": [float(x - logl_max) for x in scan_logls],
-            }
-        except Exception as exc:
-            print(f"[WARN] {name} scan failed: {exc}", flush=True)
-    return scans
-
-
 # ─── per-voltage fit plot ─────────────────────────────────────────────────────
 
 
@@ -724,7 +495,7 @@ def _finite_or_zero(v):
 
 
 def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gnorm):
-    """PDF with spectrum fit, optimizer trace, and requested profile scans."""
+    """PDF with spectrum fit and optimizer trace."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -753,16 +524,20 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
     spe_res_pct = spe["spe_res"] * 100.0
     spe_params = np.array(theta[ly["spe"]])
 
-    # gm_std: pass None to suppress ±term (gm_std=None is checked in plot fn)
-    # spe_sigma_std/spe_res_std: pass 0.0 for NaN (plot fn always formats them)
     gm_std = _finite_or_zero(spe.get("spe_mean_err", float("nan"))) or None
     spe_sigma_std = _finite_or_zero(spe.get("spe_sigma_err", float("nan")))
     spe_res_std = _finite_or_zero(spe.get("spe_res_err", 0.0) * 100.0)
 
+    # Build title with optional DCR annotation
+    dcr_info = rec.get("dark_count", {})
+    if dcr_info.get("enabled"):
+        mu_str = f"  μ_dark={dcr_info['mu_dark']:.3g}"
+    else:
+        mu_str = ""
+
     with PdfPages(out_path) as pp:
         # ── page 1: charge spectrum ──────────────────────────────────────────
         fig, ax_main, ax_resid, ax_leg = make_figure(n_comps=len(comps))
-        # draw with ys so plot_histogram_with_fit sets up axes (xlabel, label_outer)
         plot_histogram_with_fit(
             bins=bins,
             hist=hist,
@@ -790,10 +565,9 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
             ax_leg=ax_leg,
             fig=fig,
         )
-        ax_main.set_title(f"Hamamatsu PCB6  {rec['voltage']} V")
+        ax_main.set_title(f"Hamamatsu PCB6  {rec['voltage']} V{mu_str}")
         ax_main.set_ylim(bottom=0.5)
 
-        # replace raw residuals with Neyman pull = (data-model)/sqrt(max(model,1))
         pull = (hist - ys) / np.sqrt(np.maximum(ys, 1.0))
         ax_resid.cla()
         ax_resid.axhline(0, color="gray", lw=1, ls="--")
@@ -822,20 +596,6 @@ def save_fit_plot(fitter, theta, theta_err, rec, out_path, trace_logl, trace_gno
             pp.savefig(fig)
             plt.close(fig)
 
-        # ── profile scans for key degeneracy directions ─────────────────────
-        for name, scan in rec.get("profile_scans", {}).items():
-            fig, ax = plt.subplots()
-            ax.plot(scan["x"], scan["delta_logl"], lw=1.5)
-            ax.axhline(-0.5, color="C0", ls="--", lw=0.8, label="±1σ")
-            ax.axhline(-2.0, color="C1", ls="--", lw=0.8, label="±2σ")
-            ax.set_xlabel(scan.get("label", name))
-            ax.set_ylabel("Δlog L")
-            ax.set_title(f"{name} profile scan — {rec['voltage']} V")
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            pp.savefig(fig)
-            plt.close(fig)
-
     print(f"[PLOT] {out_path}", flush=True)
 
 
@@ -852,45 +612,42 @@ def main():
     parser.add_argument(
         "--init-json",
         default=None,
-        help="Optional JSON with theta or physical ped/spe/lam initial values",
+        help="Optional JSON with theta or physical ped/spe/lam/dark initial values",
     )
-    parser.add_argument(
-        "--explore-seeds",
-        type=int,
-        default=64,
-        help="Number of Sobol scout seeds before optimization",
+
+    # Dark count arguments
+    dcr_group = parser.add_argument_group("dark count")
+    dcr_group.add_argument(
+        "--dcr",
+        type=float,
+        default=None,
+        metavar="MU",
+        help="Enable dark-count term with initial mu_dark=MU (mean dark pulses per window)."
+             " If omitted, DCR is disabled regardless of voltage.",
     )
-    parser.add_argument(
-        "--starts",
-        type=int,
-        default=4,
-        help="Number of gradient-ranked scout seeds to optimize",
-    )
-    parser.add_argument(
-        "--scout-seed",
-        type=int,
-        default=12345,
-        help="Deterministic seed for scrambled Sobol scout points",
-    )
-    parser.add_argument(
-        "--optimizer",
-        choices=["zoom", "fixed"],
-        default="zoom",
-        help="Optax L-BFGS variant; zoom is the default strong-Wolfe line search",
-    )
-    parser.add_argument(
-        "--profile-scans",
-        default="lam,rho,beta,xi",
-        help="Comma-separated 1D profile scans to save; use 'none' to disable",
-    )
-    parser.add_argument(
-        "--no-linesearch",
+    dcr_group.add_argument(
+        "--dcr-fixed",
         action="store_true",
-        help="Alias for --optimizer fixed",
+        help="Fix mu_dark at --dcr value (not fitted).",
+    )
+    dcr_group.add_argument(
+        "--dcr-auto",
+        action="store_true",
+        help="Auto-estimate mu_dark init from valley density; enables DCR for V>=54.5.",
+    )
+    dcr_group.add_argument(
+        "--gate-T", type=float, default=200.0, metavar="NS",
+        help="Gate length in ns (default: 200)",
+    )
+    dcr_group.add_argument(
+        "--gate-t0", type=float, default=100.0, metavar="NS",
+        help="Pre-gate window in ns (default: 100)",
+    )
+    dcr_group.add_argument(
+        "--tau-slow", type=float, default=100.0, metavar="NS",
+        help="Slow-pulse time constant in ns (default: 100)",
     )
     args = parser.parse_args()
-    if args.no_linesearch:
-        args.optimizer = "fixed"
 
     charges, counts = parse_histogram(args.input)
 
@@ -908,35 +665,86 @@ def main():
         f"  spe_mean={spe_mean:.2f}  spe_sigma={spe_sigma:.2f}  lam_est={lam_est:.3f}",
         flush=True,
     )
+
+    # ─── DCR policy ───────────────────────────────────────────────────────────
+    policy = dcr_policy(args.voltage)
+    dcr_mu_init = None
+
+    if args.dcr is not None or args.dcr_auto:
+        if policy == "off":
+            print(
+                f"[DCR ] V={args.voltage}V: DCR forced off — 0PE/1PE overlap,"
+                f" cannot constrain dark counts",
+                flush=True,
+            )
+        else:
+            if policy == "weak":
+                print(
+                    f"[DCR ] V={args.voltage}V: DCR weakly constrained —"
+                    f" treat uncertainty with caution",
+                    flush=True,
+                )
+            if args.dcr_auto and args.dcr is None:
+                dcr_mu_init = estimate_dark_mu(
+                    charges, counts, ped_mean, spe_mean,
+                    args.gate_T, args.gate_t0, args.tau_slow,
+                )
+                print(f"[DCR ] auto-estimated mu_dark={dcr_mu_init:.4g}", flush=True)
+            else:
+                dcr_mu_init = args.dcr
+            print(
+                f"[DCR ] mu_dark_init={dcr_mu_init:.4g}"
+                f"  fixed={args.dcr_fixed}"
+                f"  T={args.gate_T}ns  t0={args.gate_t0}ns  tau={args.tau_slow}ns",
+                flush=True,
+            )
+
     initial_values = load_initial_values(args.init_json)
     if initial_values is not None:
         print(f"[INIT] loaded overrides from {args.init_json}", flush=True)
 
-    result = fit_multistart(
+    fitter = make_fitter(
         charges,
         counts,
         ped_mean,
         ped_sigma,
         spe_mean,
         spe_sigma,
-        lam_est=lam_est,
-        maxiter=args.maxiter,
-        initial_values=initial_values,
-        n_probe=args.explore_seeds,
-        n_starts=args.starts,
-        optimizer_name=args.optimizer,
-        scout_seed=args.scout_seed,
+        lam_init=lam_est,
+        dark_mu_init=dcr_mu_init,
+        dark_T_gate=args.gate_T,
+        dark_t0_pre=args.gate_t0,
+        dark_tau_slow=args.tau_slow,
     )
 
-    if result is None:
-        print(f"[FAIL] all starts failed for V={args.voltage}V", flush=True)
+    # When --dcr-fixed, freeze log_mu_dark by tightening bounds to a single point
+    if args.dcr_fixed and dcr_mu_init is not None and "dark" in fitter.layout:
+        dark_idx = fitter.layout["dark"].start
+        log_mu = log(float(dcr_mu_init))
+        fitter.bounds[dark_idx] = (log_mu, log_mu + 1e-10)
+        print(f"[DCR ] log_mu_dark fixed at {log_mu:.4g}", flush=True)
+
+    theta0 = theta_from_initial_values(fitter, initial_values)
+
+    # warm up JIT
+    _ = fitter._logl_jit(jnp.asarray(theta0, dtype=jnp.float64))
+
+    print(
+        f"[FIT ] V={args.voltage}V  n_params={len(theta0)}"
+        f"  dcr={'on' if dcr_mu_init is not None else 'off'}",
+        flush=True,
+    )
+
+    try:
+        theta, logl, converged, n_iter, trace_logl, trace_gnorm = fit_optax(
+            fitter, theta0=theta0, maxiter=args.maxiter
+        )
+    except Exception as exc:
+        print(f"[FAIL] optimization failed for V={args.voltage}V: {exc}", flush=True)
         with open(args.output, "w") as f:
             json.dump({"voltage": args.voltage, "empty": False, "converged": False}, f)
         sys.exit(1)
 
-    fitter, theta, logl, trace_logl, trace_gnorm, converged, n_iter, seed_reports = result
-
-    # free accumulated LLVM allocations from multi-start before post-fit JAX calls
     jax.clear_caches()
 
     print(
@@ -959,22 +767,24 @@ def main():
     lam_err = float(theta_err[ly["lam"].start])
 
     phys = spe_phys(fitter, spe_args, spe_err)
+    dc_phys = dark_phys(fitter, theta, theta_err)
     chi2, ndf, p_val = compute_chi2(fitter, theta)
-    if args.profile_scans.lower() == "none":
-        profile_scans = {}
-    else:
-        profile_names = [x.strip() for x in args.profile_scans.split(",") if x.strip()]
-        profile_scans = make_profile_scans(fitter, theta, theta_err, profile_names)
 
     print(
         f"[CHI2] V={args.voltage}V  chi2={chi2:.1f}  ndf={ndf}  p={p_val:.3f}",
         flush=True,
     )
+    if dc_phys is not None:
+        print(
+            f"[DCR ] V={args.voltage}V  mu_dark={dc_phys['mu_dark']:.4g}"
+            f"  ±{dc_phys['mu_dark_err']:.2g}",
+            flush=True,
+        )
 
     output = {
         "voltage": args.voltage,
         "ap_model": "beta",
-        "optimizer": args.optimizer,
+        "optimizer": "backtracking-lbfgs",
         "empty": False,
         "converged": bool(converged),
         "logl": float(logl),
@@ -997,6 +807,13 @@ def main():
         "chi_sq": float(chi2),
         "ndf": int(ndf),
         "p_value": float(p_val),
+        "dark_count": dc_phys if dc_phys is not None else {"enabled": False},
+        "dark_model": {
+            "T_gate": args.gate_T,
+            "t0_pre": args.gate_t0,
+            "tau_slow": args.tau_slow,
+            "policy": policy,
+        } if dcr_mu_init is not None else None,
         "init_estimate": {
             "ped_mean": float(ped_mean),
             "ped_sigma": float(ped_sigma),
@@ -1004,8 +821,6 @@ def main():
             "spe_sigma": float(spe_sigma),
             "lam_est": float(lam_est),
         },
-        "seed_scout": seed_reports,
-        "profile_scans": profile_scans,
         "hist_q": [float(x) for x in charges],
         "hist_counts": [float(x) for x in counts],
         "hist_bin_edges": [float(x) for x in fitter.bins],
