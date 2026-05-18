@@ -29,11 +29,12 @@ $(DATA_FILES): .data.stamp
 
 fit: $(RESULT_FILES)
 
-results/PCB6_MPPC_%V.json: data/PCB6_MPPC_%V_histo.txt scripts/fit.py
+results/PCB6_MPPC_%V.json: data/PCB6_MPPC_%V_histo.txt
 	mkdir -p results figures
-	$(PYTHON) scripts/fit.py $< -o $@ \
+	{ time $(PYTHON) scripts/fit.py $< -o $@ \
 		--out-fig figures/PCB6_MPPC_$*V.pdf \
-		--voltage $* > $@.log
+		--voltage $* \
+		--dcr-auto ; } 1>$@.log 2>$@.time.log
 
 # ─── validate ────────────────────────────────────────────────────────────────
 
