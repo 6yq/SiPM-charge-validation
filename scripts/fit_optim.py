@@ -31,11 +31,40 @@ def _make_optimizer(memory_size=10):
     )
 
 
+def _progress_bar_kwargs(maxiter):
+    return {
+        "total": maxiter,
+        "unit": "step",
+        "ncols": 90,
+        "miniters": 20,
+        "mininterval": 0,
+        "maxinterval": float("inf"),
+        "leave": False,
+        "file": sys.stderr,
+    }
+
+
 def _compile_vg(fitter):
     """JIT-compile value_and_grad once; share across seeds to avoid LLVM OOM."""
     def neg_logl(t):
         return -fitter._logl_from_theta(t)
     return jax.jit(jax.value_and_grad(neg_logl)), jax.jit(neg_logl)
+
+
+def _make_step_fn(optimizer, vg_fn, value_fn_jit, bounds_lo, bounds_hi):
+    """JIT one optimizer step so Optax's line-search loop is compiled once."""
+    def step(theta, opt_state, value, grad):
+        updates, new_opt_state = optimizer.update(
+            grad, opt_state, theta,
+            value=value, grad=grad, value_fn=value_fn_jit,
+        )
+        new_theta = jnp.clip(
+            optax.apply_updates(theta, updates), bounds_lo, bounds_hi
+        )
+        new_value, new_grad = vg_fn(new_theta)
+        return new_theta, new_opt_state, new_value, new_grad
+
+    return jax.jit(step)
 
 
 def fit_optax(
@@ -66,6 +95,7 @@ def fit_optax(
         vg_fn, value_fn_jit = _compile_vg(fitter)
 
     optimizer = _make_optimizer(memory_size)
+    step_fn = _make_step_fn(optimizer, vg_fn, value_fn_jit, bounds_lo, bounds_hi)
 
     theta = theta0_j
     opt_state = optimizer.init(theta)
@@ -79,9 +109,8 @@ def fit_optax(
 
     pbar = (
         _tqdm(
-            total=maxiter, desc=desc, unit="step", ncols=90,
-            miniters=20, mininterval=0,
-            leave=False, file=sys.stderr,
+            desc=desc,
+            **_progress_bar_kwargs(maxiter),
         )
         if _HAS_TQDM else None
     )
@@ -114,17 +143,12 @@ def fit_optax(
             break
 
         try:
-            updates, opt_state = optimizer.update(
-                grad, opt_state, theta,
-                value=value, grad=grad, value_fn=value_fn_jit,
-            )
+            theta, opt_state, value, grad = step_fn(theta, opt_state, value, grad)
         except Exception as exc:
             if pbar is not None:
                 pbar.write(f"[OPTAX] step {i} update failed: {exc}", file=sys.stderr)
             break
 
-        theta = jnp.clip(optax.apply_updates(theta, updates), bounds_lo, bounds_hi)
-        value, grad = vg_fn(theta)
         n_iter = i + 1
 
     if pbar is not None:
