@@ -141,3 +141,59 @@ def compute_cov(fitter, theta):
         print(f"[WARN] Hessian failed: {exc}", flush=True)
         n = len(theta)
         return np.full((n, n), float("nan")), np.full((n, n), float("nan"))
+
+
+def _profile_crossings(x, y, level=1.0):
+    crossings = []
+    for i in range(len(y) - 1):
+        y0 = y[i] - level
+        y1 = y[i + 1] - level
+        if y0 == 0.0:
+            crossings.append(float(x[i]))
+        elif y0 * y1 < 0.0:
+            t = -y0 / (y1 - y0)
+            crossings.append(float(x[i] + t * (x[i + 1] - x[i])))
+    return crossings
+
+
+def profile_weak_ap_errors(fitter, theta, n_points=121):
+    """Return 1D profile-likelihood errors for weak AP directions."""
+    names = list(fitter.param_names)
+    wanted = [name for name in ("log_rho", "logit_beta") if name in names]
+    if not wanted:
+        return {}
+
+    theta = np.asarray(theta, dtype=float)
+    theta_j = jnp.asarray(theta, dtype=jnp.float64)
+    logl_mle = float(fitter._logl_jit(theta_j))
+    out = {}
+
+    for name in wanted:
+        idx = names.index(name)
+        lo_b, hi_b = fitter.bounds[idx]
+        grid = jnp.linspace(lo_b, hi_b, n_points, dtype=jnp.float64)
+
+        @jax.jit
+        def _scan(vals):
+            return jax.vmap(
+                lambda v: fitter._logl_from_theta(theta_j.at[idx].set(v))
+            )(vals)
+
+        raw = np.asarray(grid)
+        logl = np.asarray(_scan(grid))
+        delta = np.clip(2.0 * (logl_mle - logl), 0.0, None)
+        center = float(theta[idx])
+        crossings = _profile_crossings(raw, delta, level=1.0)
+        lower = [x for x in crossings if x < center]
+        upper = [x for x in crossings if x > center]
+        lo = max(lower) if lower else float("nan")
+        hi = min(upper) if upper else float("nan")
+        errs = [abs(center - x) for x in (lo, hi) if np.isfinite(x)]
+        err = float(max(errs)) if errs else float("nan")
+        out[name] = {
+            "lower": lo,
+            "upper": hi,
+            "err": err,
+            "method": "profile_delta2logl_1",
+        }
+    return out
