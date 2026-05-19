@@ -16,7 +16,12 @@ VSTEMS:=53 53.5 54 54.5 55 55.5 56 56.5 57 57.5 58 58.5 59 59.5 60
 SEEDS:=16
 DATA_FILES:=$(VSTEMS:%=data/PCB6_MPPC_%V_histo.txt)
 RESULT_FILES:=$(VSTEMS:%=results/PCB6_MPPC_%V.json)
-SCAN_FILES:=$(VSTEMS:%=figures/PCB6_MPPC_%V_scan.pdf)
+
+# Conduct both DCR enabled and disabled fits for 53.* V.
+LOWVSTEMS:=53 53.5
+DCR_COMPARE_FILES:=$(LOWVSTEMS:%=results/PCB6_MPPC_%V_dcr.json)
+
+MODEL_RESULT_FILES:=$(RESULT_FILES) $(DCR_COMPARE_FILES)
 
 .PHONY: all data fit scan validate clean
 
@@ -35,7 +40,7 @@ $(DATA_FILES): .data.stamp
 
 # ─── fit ─────────────────────────────────────────────────────────────────────
 
-fit: $(RESULT_FILES)
+fit: $(MODEL_RESULT_FILES)
 
 results/PCB6_MPPC_%V.json: data/PCB6_MPPC_%V_histo.txt
 	mkdir -p results figures
@@ -45,14 +50,23 @@ results/PCB6_MPPC_%V.json: data/PCB6_MPPC_%V_histo.txt
 		--n-seeds $(SEEDS) --maxiter 1000 \
 		--dcr-auto ; } 1>$@.log 2>$@.time.log
 
+results/PCB6_MPPC_%V_dcr.json: data/PCB6_MPPC_%V_histo.txt
+	mkdir -p results figures
+	{ time $(PYTHON) scripts/fit.py $< -o $@ \
+		--out-fig figures/PCB6_MPPC_$*V_dcr.pdf \
+		--voltage $* \
+		--n-seeds $(SEEDS) --maxiter 1000 \
+		--dcr-auto --dcr-force ; } 1>$@.log 2>$@.time.log
+
 # ─── validate ────────────────────────────────────────────────────────────────
 
 validate: results/fit_results.csv
 
-results/fit_results.csv: $(RESULT_FILES) scripts/validate.py
+results/fit_results.csv: $(MODEL_RESULT_FILES) scripts/validate.py
 	mkdir -p figures
-	$(PYTHON) scripts/validate.py $(RESULT_FILES) \
+	$(PYTHON) scripts/validate.py $(MODEL_RESULT_FILES) \
 		--out-csv results/fit_results.csv \
+		--out-model-csv results/fit_results_models.csv \
 		--out-val figures/validation.pdf
 
 # ─── clean ───────────────────────────────────────────────────────────────────

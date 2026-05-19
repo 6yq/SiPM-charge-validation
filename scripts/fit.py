@@ -37,6 +37,7 @@ from fit_analysis import (
     dark_phys,
     compute_chi2,
     compute_cov,
+    profile_weak_ap_errors,
     print_theta_table,
 )
 from fit_plot import save_fit_plot
@@ -82,6 +83,11 @@ def main():
         action="store_true",
         help="Auto-estimate mu_dark from 0PE-1PE valley; voltage policy applies"
         " (off <=53.5V, weak 54V, float >=54.5V).",
+    )
+    dcr_group.add_argument(
+        "--dcr-force",
+        action="store_true",
+        help="Allow DCR fitting even when the voltage policy would normally disable it.",
     )
     dcr_group.add_argument(
         "--gate-T",
@@ -146,12 +152,18 @@ def main():
     dcr_mu_init = None
 
     if args.dcr is not None or args.dcr_auto:
-        if policy == "off":
+        if policy == "off" and not args.dcr_force:
             print(
                 f"[DCR ] V={args.voltage}V: forced off — 0PE/1PE overlap at this voltage",
                 flush=True,
             )
         else:
+            if policy == "off" and args.dcr_force:
+                print(
+                    f"[DCR ] V={args.voltage}V: policy override — fitting DCR"
+                    " for model comparison",
+                    flush=True,
+                )
             if policy == "weak":
                 print(
                     f"[DCR ] V={args.voltage}V: weakly constrained —"
@@ -255,6 +267,10 @@ def main():
     cov, corr = compute_cov(fitter, theta)
     theta_err = np.sqrt(np.maximum(np.diag(cov), 0.0))
     theta_err = np.where(np.diag(cov) > 0, theta_err, np.full_like(theta, np.nan))
+    profile_errors = profile_weak_ap_errors(fitter, theta)
+    for name, info in profile_errors.items():
+        if np.isfinite(info.get("err", float("nan"))):
+            theta_err[list(fitter.param_names).index(name)] = float(info["err"])
 
     spe_err = theta_err[ly["spe"]]
     extra_err = theta_err[ly["extra"]]
@@ -263,6 +279,8 @@ def main():
     phys = spe_phys(fitter, spe_args, spe_err)
     dc_phys = dark_phys(fitter, theta, theta_err)
     chi2, ndf, p_val = compute_chi2(fitter, theta)
+    n_params = len(theta)
+    bic = float(n_params * np.log(max(n_events_fit, 2)) - 2.0 * logl)
 
     print(f"[MLE ] final theta — V={args.voltage}V", flush=True)
     print_theta_table(fitter, theta, "MLE ", theta_err)
@@ -288,9 +306,13 @@ def main():
         "n_iter": int(n_iter),
         "n_events": n_events_full,
         "n_fit_events": n_events_fit,
+        "n_params": n_params,
+        "bic": bic,
+        "dcr_forced": bool(args.dcr_force),
         "param_names": list(fitter.param_names),
         "theta": [float(x) for x in theta],
         "theta_err": [float(x) for x in theta_err],
+        "profile_errors": profile_errors,
         "cov": [[float(x) for x in row] for row in cov],
         "corr": [[float(x) for x in row] for row in corr],
         "ped": {
@@ -312,6 +334,7 @@ def main():
                 "t0_pre": args.gate_t0,
                 "tau_slow": args.tau_slow,
                 "policy": policy,
+                "forced": bool(args.dcr_force),
             }
             if dcr_mu_init is not None
             else None
