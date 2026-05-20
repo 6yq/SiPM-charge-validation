@@ -33,8 +33,14 @@ def _dcr_enabled(rec):
     return bool(rec.get("dark_count", {}).get("enabled", False))
 
 
+def _ap_enabled(rec):
+    return bool(rec.get("ap_enabled", rec.get("ap_model", "beta") != "none"))
+
+
 def _model_label(rec):
-    return "dcr_on" if _dcr_enabled(rec) else "dcr_off"
+    dcr = "DCR_on" if _dcr_enabled(rec) else "DCR_off"
+    ap = "AP_on" if _ap_enabled(rec) else "AP_off"
+    return f"{dcr}_{ap}"
 
 
 def _bic(rec):
@@ -49,6 +55,7 @@ def _bic(rec):
 def _with_model_metrics(rec):
     out = dict(rec)
     out["dcr_enabled"] = _dcr_enabled(rec)
+    out["ap_enabled"] = _ap_enabled(rec)
     out["model"] = _model_label(rec)
     out["n_params"] = len(rec.get("param_names", rec.get("theta", [])))
     out["bic"] = float(rec.get("bic", _bic(rec)))
@@ -65,7 +72,9 @@ def select_bic_records(records):
     selected = []
     for voltage in sorted(grouped):
         candidates = grouped[voltage]
-        best = min(candidates, key=lambda r: (r["bic"], not r.get("converged", False)))
+        best = min(
+            candidates, key=lambda r: (r["bic"], not r.get("converged", False))
+        )
         for rec in candidates:
             rec["bic_selected"] = rec is best
         selected.append(best)
@@ -76,6 +85,10 @@ def build_dataframe(records):
     rows = []
     for r in records:
         spe = dict(r["spe"])
+        if "xi" in spe:
+            spe["theta"] = spe["xi"]
+        if "xi_err" in spe:
+            spe["theta_err"] = spe["xi_err"]
         if "ap_charge_mean" in spe and "spe_mean" in spe:
             gain = float(spe["spe_mean"])
             if np.isfinite(gain) and gain != 0.0:
@@ -100,8 +113,10 @@ def build_dataframe(records):
             "voltage": r["voltage"],
             "model": r.get("model", _model_label(r)),
             "dcr_enabled": bool(r.get("dcr_enabled", _dcr_enabled(r))),
+            "ap_enabled": bool(r.get("ap_enabled", _ap_enabled(r))),
             "n_params": int(r.get("n_params", len(r.get("param_names", [])))),
             "bic": float(r.get("bic", _bic(r))),
+            "dcr_bic_selected": bool(r.get("dcr_bic_selected", False)),
             "bic_selected": bool(r.get("bic_selected", False)),
             "converged": r["converged"],
             "logl": r["logl"],
@@ -127,8 +142,8 @@ def correlation_param_label(name):
         "ped_sigma": r"$\sigma_0$",
         "a_logSigma": r"$\log\sigma_{\mathrm{SPE}}$",
         "b_logDiff": r"$\log(G^*-\sigma_{\mathrm{SPE}})$",
-        "log_xi": r"$\log\xi$",
-        "xi": r"$\xi$",
+        "log_xi": r"$\log\theta$",
+        "xi": r"$\theta$",
         "log_rho": r"$\log\rho$",
         "logit_beta": r"$\mathrm{logit}\,m_{\mathrm{AP}}$",
         "lam": r"$\lambda$",
@@ -146,7 +161,7 @@ _VOLTAGE_LABEL = r"$V_{\mathrm{bias}}\;(\mathrm{V})$"
 def _one_param_page(pp, vs, y, ye, ylabel, title=None):
     """Single errorbar plot on one PDF page."""
     fig, ax = plt.subplots()
-    ax.plot(vs, y, linestyle="--", color="0.4", lw=1.0)
+    ax.plot(vs, y, linestyle=":", color="0.55", lw=1.0)
     ax.errorbar(
         vs,
         y,
@@ -198,9 +213,9 @@ def plot_validation(df, records, pp):
     _one_param_page(
         pp,
         vs,
-        _col("spe_xi"),
+        _col("spe_theta"),
         None,
-        r"$\xi$",
+        r"$\theta$",
     )
 
     # Afterpulse parameters
@@ -247,7 +262,7 @@ def plot_validation(df, records, pp):
     # Fit quality
     chi2_ndf = _col("chi_sq") / np.maximum(_col("ndf"), 1)
     fig, ax = plt.subplots()
-    ax.plot(vs, chi2_ndf, linestyle="--", color="0.4", lw=1.0)
+    ax.plot(vs, chi2_ndf, linestyle=":", color="0.55", lw=1.0)
     ax.plot(vs, chi2_ndf, "o", color="k", markersize=5)
     ax.axhline(1.0, color="r", ls="--", lw=0.8, label="ideal")
     ax.set_xlabel(_VOLTAGE_LABEL)
@@ -286,8 +301,10 @@ def plot_validation(df, records, pp):
                             fontsize=12,
                             color="white" if abs(val) > 0.6 else "black",
                         )
+            model_label = rec.get("model", _model_label(rec)).replace("_", r"\ ")
             ax.set_title(
-                rf"Parameter correlations, $V_{{\mathrm{{bias}}}}={rec['voltage']:g}\,\mathrm{{V}}$"
+                rf"$V_{{\mathrm{{bias}}}}={rec['voltage']:g}\,\mathrm{{V}}$, "
+                rf"$\mathrm{{{model_label}}}$"
             )
             pp.savefig(fig)
             plt.close(fig)
@@ -329,7 +346,7 @@ def main():
     print(f"[CSV ] {args.out_csv}  ({len(df)} rows)", flush=True)
 
     with PdfPages(args.out_val) as pp:
-        plot_validation(df, selected, pp)
+        plot_validation(df, all_models, pp)
     print(f"[PDF ] {args.out_val}", flush=True)
 
 

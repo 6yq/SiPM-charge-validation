@@ -59,7 +59,7 @@ _SCAN_DEFS = [
     # (theta param name, physical x-axis label)
     ("lam", r"$\lambda$"),
     ("b_logDiff", r"$G^*$"),
-    ("log_xi", r"$\xi$"),
+    ("log_xi", r"$\theta$"),
     ("log_rho", r"$\rho$"),
     ("logit_beta", r"$\beta$"),
     ("log_mu_dark", r"$\mu_\mathrm{dark}$"),

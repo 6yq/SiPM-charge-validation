@@ -11,13 +11,26 @@ def spe_phys(fitter, spe_args, spe_err):
     sigma = float(np.exp(a))
     r["spe_sigma_err"] = sigma * da
     r["spe_mean_err"] = float(np.sqrt((sigma * da) ** 2 + (float(np.exp(b)) * db) ** 2))
-    rho = r["rho"]
-    beta = r["beta"]
     if "log_xi" in fitter.param_names:
         log_xi_idx = list(fitter.param_names).index("log_xi") - fitter.layout["spe"].start
         r["xi_err"] = r["xi"] * float(spe_err[log_xi_idx])
     else:
         r["xi_err"] = float(spe_err[2])
+    if "rho" not in r or "beta" not in r:
+        spe_mean = r["spe_mean"]
+        spe_sigma = r["spe_sigma"]
+        spe_res = spe_sigma / spe_mean
+        r["spe_res"] = spe_res
+        r["spe_res_err"] = spe_res * float(
+            np.sqrt(
+                (r["spe_sigma_err"] / (spe_sigma + 1e-30)) ** 2
+                + (r["spe_mean_err"] / (spe_mean + 1e-30)) ** 2
+            )
+        )
+        return r
+
+    rho = r["rho"]
+    beta = r["beta"]
     drho = rho * float(spe_err[3])
     dbeta = beta * (1.0 - beta) * float(spe_err[4])
     r["rho_err"] = drho
@@ -106,7 +119,7 @@ def print_theta_table(fitter, theta, label, theta_err=None):
             else:
                 phys = f"exp={np.exp(raw):.3f}"
         elif name == "log_xi":
-            phys = f"xi={np.exp(raw):.6g}"
+            phys = f"theta={np.exp(raw):.6g}"
         elif name == "log_rho":
             phys = f"rho={np.exp(raw):.5f}"
         elif name == "logit_beta":

@@ -122,11 +122,11 @@ def theta_from_initial_values(fitter, initial_values):
             theta[spe_sl.start + 2] = xi
 
     rho = spe.get("rho", initial_values.get("rho"))
-    if rho is not None:
+    if rho is not None and "log_rho" in fitter.param_names:
         theta[spe_sl.start + 3] = log(float(rho))
 
     beta = spe.get("beta", initial_values.get("beta"))
-    if beta is not None:
+    if beta is not None and "logit_beta" in fitter.param_names:
         theta[spe_sl.start + 4] = _logit(float(beta))
 
     lam = initial_values.get("lam")

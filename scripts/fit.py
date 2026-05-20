@@ -63,6 +63,11 @@ def main():
         default=None,
         help="Optional JSON with theta or physical ped/spe/lam/dark initial values",
     )
+    parser.add_argument(
+        "--ap-off",
+        action="store_true",
+        help="Disable afterpulse contribution for model comparison.",
+    )
 
     dcr_group = parser.add_argument_group("dark count")
     dcr_group.add_argument(
@@ -209,6 +214,7 @@ def main():
         total_events=n_events_full,
         display_charges=charges_full,
         display_counts=counts_full,
+        ap_enabled=not args.ap_off,
     )
 
     if args.dcr_fixed and dcr_mu_init is not None and "dark" in fitter.layout:
@@ -298,7 +304,8 @@ def main():
 
     output = {
         "voltage": args.voltage,
-        "ap_model": "beta",
+        "ap_model": "none" if args.ap_off else "beta",
+        "ap_enabled": not args.ap_off,
         "optimizer": f"zoom-lbfgs/{_loop_tag}",
         "empty": False,
         "converged": bool(converged),
