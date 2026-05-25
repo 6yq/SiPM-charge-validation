@@ -1,0 +1,33 @@
+[*] No Lambert-W table found, consider running `gen_lambert_w_table.py`
+[INIT] V=54.5V  ped_mean=1.17  ped_sigma=8.59  spe_mean=76.51  spe_sigma=9.51  lam_est=0.840
+[ROI ] fit range Q >= -24.60  fit_entries=331412  total_entries=331800
+[DCR ] auto-estimated mu_dark=0.06399
+[DCR ] mu_dark_init=0.06399  fixed=False  T=104.0ns  t0=100.0ns  tau=21.953ns
+[INIT] initial theta — V=54.5V
+[INIT]   log_A                  +12.71229                A=331800
+[INIT]   ped_mean                +1.16700                
+[INIT]   ped_sigma               +8.59033                
+[INIT]   a_logSigma              +2.25271                sigma=9.514
+[INIT]   b_logDiff               +4.20468                spe_mean=76.513
+[INIT]   log_xi                  -3.21888                theta=0.04
+[INIT]   lam                     +0.83987                
+[INIT]   log_mu_dark             -2.74903                mu_dark=0.06399
+[FIT ] V=54.5V  n_params=8  dcr=on  backend=cpu  loop=python  seeds=16
+[FIT ] V=54.5V  converged=True  logl=-1865.01  n_iter=109
+[MLE ] final theta — V=54.5V
+[MLE ]   log_A                  +12.71229  ±0.0017       A=331800
+[MLE ]   ped_mean                +0.22513  ±0.0223       
+[MLE ]   ped_sigma               +8.63848  ±0.0166       
+[MLE ]   a_logSigma              +1.35162  ±0.0113       sigma=3.864
+[MLE ]   b_logDiff               +4.28394  ±0.0007       spe_mean=76.389
+[MLE ]   log_xi                  -4.85627  ±0.1636       theta=0.00777947
+[MLE ]   lam                     +0.80394  ±0.0020       
+[MLE ]   log_mu_dark             -2.72966  ±0.0235       mu_dark=0.06524
+[CHI2] V=54.5V  chi2=574.7  ndf=466  p=0.000
+[DCR ] V=54.5V  mu_dark=0.06524  ±0.0015
+[SAVE] results/PCB6_MPPC_54.5V_dcr_apoff.json
+[SCAN] scanning lam...
+[SCAN] scanning b_logDiff...
+[SCAN] scanning log_xi...
+[SCAN] scanning log_mu_dark...
+[PLOT] figures/PCB6_MPPC_54.5V_dcr_apoff.pdf

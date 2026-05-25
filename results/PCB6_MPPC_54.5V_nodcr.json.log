@@ -1,0 +1,33 @@
+[*] No Lambert-W table found, consider running `gen_lambert_w_table.py`
+[INIT] V=54.5V  ped_mean=1.17  ped_sigma=8.59  spe_mean=76.51  spe_sigma=9.51  lam_est=0.840
+[ROI ] fit range Q >= -24.60  fit_entries=331412  total_entries=331800
+[INIT] initial theta — V=54.5V
+[INIT]   log_A                  +12.71229                A=331800
+[INIT]   ped_mean                +1.16700                
+[INIT]   ped_sigma               +8.59033                
+[INIT]   a_logSigma              +2.25271                sigma=9.514
+[INIT]   b_logDiff               +4.20468                spe_mean=76.513
+[INIT]   log_xi                  -3.21888                theta=0.04
+[INIT]   log_rho                 -4.60517                rho=0.01000
+[INIT]   logit_beta              -2.93944                beta=0.05024
+[INIT]   lam                     +0.83987                
+[FIT ] V=54.5V  n_params=9  dcr=off  backend=cpu  loop=python  seeds=16
+[FIT ] V=54.5V  converged=True  logl=-3052.47  n_iter=140
+[MLE ] final theta — V=54.5V
+[MLE ]   log_A                  +12.71229  ±0.0017       A=331800
+[MLE ]   ped_mean                +0.46358  ±0.0223       
+[MLE ]   ped_sigma               +9.03366  ±0.0164       
+[MLE ]   a_logSigma              +1.32987  ±0.0130       sigma=3.781
+[MLE ]   b_logDiff               +4.28006  ±0.0008       spe_mean=76.025
+[MLE ]   log_xi                  -5.82930  ±0.4309       theta=0.00294015
+[MLE ]   log_rho                 -4.22222  ±0.0361       rho=0.01467
+[MLE ]   logit_beta              -0.29876  ±0.0469       beta=0.42586
+[MLE ]   lam                     +0.83664  ±0.0019       
+[CHI2] V=54.5V  chi2=6462.3  ndf=468  p=0.000
+[SAVE] results/PCB6_MPPC_54.5V_nodcr.json
+[SCAN] scanning lam...
+[SCAN] scanning b_logDiff...
+[SCAN] scanning log_xi...
+[SCAN] scanning log_rho...
+[SCAN] scanning logit_beta...
+[PLOT] figures/PCB6_MPPC_54.5V_nodcr.pdf

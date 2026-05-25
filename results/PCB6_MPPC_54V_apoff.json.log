@@ -1,0 +1,27 @@
+[*] No Lambert-W table found, consider running `gen_lambert_w_table.py`
+[INIT] V=54.0V  ped_mean=0.17  ped_sigma=8.56  spe_mean=64.01  spe_sigma=9.34  lam_est=0.729
+[ROI ] fit range Q >= -25.52  fit_entries=389374  total_entries=390040
+[INIT] initial theta — V=54.0V
+[INIT]   log_A                  +12.87400                A=390040
+[INIT]   ped_mean                +0.16700                
+[INIT]   ped_sigma               +8.56226                
+[INIT]   a_logSigma              +2.23472                sigma=9.344
+[INIT]   b_logDiff               +4.00125                spe_mean=64.010
+[INIT]   log_xi                  -3.21888                theta=0.04
+[INIT]   lam                     +0.72861                
+[FIT ] V=54.0V  n_params=7  dcr=off  backend=cpu  loop=python  seeds=16
+[FIT ] V=54.0V  converged=True  logl=-2123.05  n_iter=53
+[MLE ] final theta — V=54.0V
+[MLE ]   log_A                  +12.87401  ±0.0016       A=390040
+[MLE ]   ped_mean                +0.31654  ±0.0195       
+[MLE ]   ped_sigma               +8.93148  ±0.0141       
+[MLE ]   a_logSigma              +1.38812  ±0.0089       sigma=4.007
+[MLE ]   b_logDiff               +4.07135  ±0.0007       spe_mean=62.644
+[MLE ]   log_xi                  -5.23995  ±0.2153       theta=0.00530053
+[MLE ]   lam                     +0.72762  ±0.0016       
+[CHI2] V=54.0V  chi2=1522.7  ndf=382  p=0.000
+[SAVE] results/PCB6_MPPC_54V_apoff.json
+[SCAN] scanning lam...
+[SCAN] scanning b_logDiff...
+[SCAN] scanning log_xi...
+[PLOT] figures/PCB6_MPPC_54V_apoff.pdf

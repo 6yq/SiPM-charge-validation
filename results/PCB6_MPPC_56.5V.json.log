@@ -1,0 +1,39 @@
+[*] No Lambert-W table found, consider running `gen_lambert_w_table.py`
+[INIT] V=56.5V  ped_mean=0.17  ped_sigma=8.65  spe_mean=129.19  spe_sigma=10.34  lam_est=1.143
+[ROI ] fit range Q >= -30.11  fit_entries=358080  total_entries=358120
+[DCR ] auto-estimated mu_dark=0.0754
+[DCR ] mu_dark_init=0.0754  fixed=False  T=104.0ns  t0=100.0ns  tau=21.953ns
+[INIT] initial theta — V=56.5V
+[INIT]   log_A                  +12.78862                A=358120
+[INIT]   ped_mean                +0.16700                
+[INIT]   ped_sigma               +8.65011                
+[INIT]   a_logSigma              +2.33554                sigma=10.335
+[INIT]   b_logDiff               +4.77789                spe_mean=129.188
+[INIT]   log_xi                  -3.21888                xi=0.04
+[INIT]   log_rho                 -4.60517                rho=0.01000
+[INIT]   logit_beta              -3.39911                beta=0.03232
+[INIT]   lam                     +1.14267                
+[INIT]   log_mu_dark             -2.58493                mu_dark=0.0754
+[FIT ] V=56.5V  n_params=10  dcr=on  backend=cpu  loop=python  seeds=16
+[FIT ] V=56.5V  converged=True  logl=-3166.85  n_iter=312
+[MLE ] final theta — V=56.5V
+[MLE ]   log_A                  +12.78862  ±0.0017       A=358120
+[MLE ]   ped_mean                +0.20259  ±0.0242       
+[MLE ]   ped_sigma               +8.74540  ±0.0186       
+[MLE ]   a_logSigma              +1.51429  ±0.0077       sigma=4.546
+[MLE ]   b_logDiff               +4.82623  ±0.0003       spe_mean=129.286
+[MLE ]   log_xi                  -4.12364  ±0.0754       xi=0.0161855
+[MLE ]   log_rho                 -3.85522  ±0.0226       rho=0.02117
+[MLE ]   logit_beta              -0.39389  ±0.0281       beta=0.40278
+[MLE ]   lam                     +1.09407  ±0.0023       
+[MLE ]   log_mu_dark             -2.56415  ±0.0190       mu_dark=0.07698
+[CHI2] V=56.5V  chi2=904.0  ndf=873  p=0.227
+[DCR ] V=56.5V  mu_dark=0.07698  ±0.0015
+[SAVE] results/PCB6_MPPC_56.5V.json
+[SCAN] scanning lam...
+[SCAN] scanning b_logDiff...
+[SCAN] scanning log_xi...
+[SCAN] scanning log_rho...
+[SCAN] scanning logit_beta...
+[SCAN] scanning log_mu_dark...
+[PLOT] figures/PCB6_MPPC_56.5V.pdf

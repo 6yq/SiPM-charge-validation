@@ -1,0 +1,40 @@
+[*] No Lambert-W table found, consider running `gen_lambert_w_table.py`
+[INIT] V=53.0V  ped_mean=1.17  ped_sigma=9.70  spe_mean=35.17  spe_sigma=6.44  lam_est=0.412
+[ROI ] fit range Q >= -23.07  fit_entries=332171  total_entries=333760
+[DCR ] V=53.0V: policy override — fitting DCR for model comparison
+[DCR ] auto-estimated mu_dark=0.7364
+[DCR ] mu_dark_init=0.7364  fixed=False  T=104.0ns  t0=100.0ns  tau=21.953ns
+[INIT] initial theta — V=53.0V
+[INIT]   log_A                  +12.71818                A=333760
+[INIT]   ped_mean                +1.16700                
+[INIT]   ped_sigma               +9.69570                
+[INIT]   a_logSigma              +1.86223                sigma=6.438
+[INIT]   b_logDiff               +3.35811                spe_mean=35.173
+[INIT]   log_xi                  -3.21888                theta=0.04
+[INIT]   log_rho                 -4.60517                rho=0.01000
+[INIT]   logit_beta              -2.52745                beta=0.07396
+[INIT]   lam                     +0.41210                
+[INIT]   log_mu_dark             -0.30601                mu_dark=0.7364
+[FIT ] V=53.0V  n_params=10  dcr=on  backend=cpu  loop=python  seeds=16
+[FIT ] V=53.0V  converged=True  logl=-1055.64  n_iter=335
+[MLE ] final theta — V=53.0V
+[MLE ]   log_A                  +12.71818  ±0.0017       A=333760
+[MLE ]   ped_mean                -0.00771  ±0.0220       
+[MLE ]   ped_sigma               +8.98345  ±0.0165       
+[MLE ]   a_logSigma              +0.00000  ±0.6188       sigma=1.000
+[MLE ]   b_logDiff               +3.53193  ±0.0139       spe_mean=35.190
+[MLE ]   log_xi                  -5.76727  ±0.4603       theta=0.00312827
+[MLE ]   log_rho                 -1.69298  ±0.9519       rho=0.18397
+[MLE ]   logit_beta              -2.03627  ±0.0343       beta=0.11545
+[MLE ]   lam                     +0.42094  ±0.0014       
+[MLE ]   log_mu_dark             -9.21034  ±5.6170       mu_dark=0.0001
+[CHI2] V=53.0V  chi2=325.1  ndf=197  p=0.000
+[DCR ] V=53.0V  mu_dark=0.0001  ±0.00056
+[SAVE] results/PCB6_MPPC_53V_dcr.json
+[SCAN] scanning lam...
+[SCAN] scanning b_logDiff...
+[SCAN] scanning log_xi...
+[SCAN] scanning log_rho...
+[SCAN] scanning logit_beta...
+[SCAN] scanning log_mu_dark...
+[PLOT] figures/PCB6_MPPC_53V_dcr.pdf

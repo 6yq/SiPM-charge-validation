@@ -1,0 +1,34 @@
+[*] No Lambert-W table found, consider running `gen_lambert_w_table.py`
+[INIT] V=53.0V  ped_mean=1.17  ped_sigma=9.70  spe_mean=35.17  spe_sigma=6.44  lam_est=0.412
+[ROI ] fit range Q >= -23.07  fit_entries=332171  total_entries=333760
+[DCR ] V=53.0V: forced off — 0PE/1PE overlap at this voltage
+[INIT] initial theta — V=53.0V
+[INIT]   log_A                  +12.71818                A=333760
+[INIT]   ped_mean                +1.16700                
+[INIT]   ped_sigma               +9.69570                
+[INIT]   a_logSigma              +1.86223                sigma=6.438
+[INIT]   b_logDiff               +3.35811                spe_mean=35.173
+[INIT]   log_xi                  -3.21888                theta=0.04
+[INIT]   log_rho                 -4.60517                rho=0.01000
+[INIT]   logit_beta              -2.52745                beta=0.07396
+[INIT]   lam                     +0.41210                
+[FIT ] V=53.0V  n_params=9  dcr=off  backend=cpu  loop=python  seeds=16
+[FIT ] V=53.0V  converged=True  logl=-1055.60  n_iter=230
+[MLE ] final theta — V=53.0V
+[MLE ]   log_A                  +12.71818  ±0.0017       A=333760
+[MLE ]   ped_mean                -0.00752  ±0.0219       
+[MLE ]   ped_sigma               +8.98354  ±0.0165       
+[MLE ]   a_logSigma              +0.00000  ±0.6217       sigma=1.000
+[MLE ]   b_logDiff               +3.53186  ±0.0139       spe_mean=35.187
+[MLE ]   log_xi                  -5.76704  ±0.4600       theta=0.00312901
+[MLE ]   log_rho                 -1.68885  ±0.9588       rho=0.18473
+[MLE ]   logit_beta              -2.03789  ±0.0368       beta=0.11528
+[MLE ]   lam                     +0.42099  ±0.0014       
+[CHI2] V=53.0V  chi2=325.1  ndf=198  p=0.000
+[SAVE] results/PCB6_MPPC_53V.json
+[SCAN] scanning lam...
+[SCAN] scanning b_logDiff...
+[SCAN] scanning log_xi...
+[SCAN] scanning log_rho...
+[SCAN] scanning logit_beta...
+[PLOT] figures/PCB6_MPPC_53V.pdf
