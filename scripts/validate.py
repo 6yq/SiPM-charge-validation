@@ -214,7 +214,7 @@ def plot_validation(df, records, pp):
         pp,
         vs,
         _col("spe_theta"),
-        None,
+        _col("spe_theta_err"),
         r"$\theta$",
     )
 

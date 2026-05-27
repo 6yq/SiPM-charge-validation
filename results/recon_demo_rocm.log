@@ -1,0 +1,7 @@
+[*] No Lambert-W table found, consider running `gen_lambert_w_table.py`
+[+] Trajectory summary -> figures/recon_trajectory.pdf
+[+] Memory summary -> figures/recon_memory_vs_lam.pdf
+[+] Time summary -> figures/recon_time_vs_lam.pdf
+[+] Gradient/Hessian summary -> figures/recon_grad_hess_vs_lam.pdf
+[+] Reconstruction result distributions -> figures/recon_results.pdf
+[+] Staged recon pipeline complete: events=40, methods=cf,point_convolution,interpolated_table, backend=GPU requested

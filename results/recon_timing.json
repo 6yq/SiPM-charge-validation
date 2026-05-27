@@ -1,0 +1,23 @@
+{
+  "stages": {
+    "detector_s": 0.04179340600967407,
+    "mc_s": 0.8776983499992639,
+    "tables_s": 0.03056385205127299,
+    "reconstruction_s": 2.310390735976398
+  },
+  "methods": {
+    "cf": {
+      "runtime_s": 0.74712133128196,
+      "events": 40
+    },
+    "point_convolution": {
+      "runtime_s": 0.7422349844127893,
+      "events": 40
+    },
+    "interpolated_table": {
+      "runtime_s": 0.7462604206521064,
+      "events": 40
+    }
+  },
+  "note": "plots use runtime-only reconstruction timing; setup/precompute retained here"
+}
