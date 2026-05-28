@@ -12,5 +12,9 @@ __pycache__/
 *.md
 !README.md
 
+# profiling and timing logs
+*.log
+logs/
+
 # local tool/config state directories
 .*/

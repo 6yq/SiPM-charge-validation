@@ -188,6 +188,21 @@ def plot_validation(df, records, pp):
     def _col(key):
         return df[key].values if key in df.columns else np.zeros(len(vs))
 
+    def _existing_param_page(key, err_key, ylabel):
+        if key not in df.columns:
+            return
+        y = df[key].to_numpy(dtype=float)
+        mask = np.isfinite(y)
+        if not np.any(mask):
+            return
+        ye = (
+            df[err_key].to_numpy(dtype=float)
+            if err_key in df.columns
+            else np.zeros(len(df), dtype=float)
+        )
+        ye = np.where(np.isfinite(ye), ye, 0.0)
+        _one_param_page(pp, vs[mask], y[mask], ye[mask], ylabel)
+
     # SPE parameters
     _one_param_page(
         pp,
@@ -232,6 +247,13 @@ def plot_validation(df, records, pp):
         _col("spe_ap_charge_fraction"),
         _col("spe_ap_charge_fraction_err"),
         r"$\langle Q_{\mathrm{AP}}\rangle/G^*$",
+    )
+
+    # Dark-count parameter, shown only where the BIC-selected model has it.
+    _existing_param_page(
+        "dark_mu_dark",
+        "dark_mu_dark_err",
+        r"$\mu_{\mathrm{dark}}$",
     )
 
     # Occupancy
